@@ -16,6 +16,7 @@ class GraphConv(nn.Module):
         dropout=0.0,
         bias=True,
         gpu=True,
+        #Attention Mechanism
         att=False,
     ):
         super(GraphConv, self).__init__()
@@ -28,7 +29,9 @@ class GraphConv(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         if not gpu:
+            # init mat-w with dim of features and dim of output and nn,param Wraps the tensor as a paramete
             self.weight = nn.Parameter(torch.FloatTensor(input_dim, output_dim))
+            #they add self node param ifself ans att node if affected 
             if add_self:
                 self.self_weight = nn.Parameter(
                     torch.FloatTensor(input_dim, output_dim)
@@ -66,9 +69,10 @@ class GraphConv(nn.Module):
             att = x_att @ x_att.permute(0, 2, 1)
             # att = self.softmax(att)
             adj = adj * att
-
+        #ggregate the features of neighboring nodes and transform *w 
         y = torch.matmul(adj, x)
         y = torch.matmul(y, self.weight)
+        # add self-loop
         if self.add_self:
             self_emb = torch.matmul(x, self.self_weight)
             y += self_emb
@@ -133,6 +137,9 @@ class GcnEncoderGraph(nn.Module):
 
         for m in self.modules():
             if isinstance(m, GraphConv):
+                # function used to initialize the weights aintain the variance of activations and gradients across layers, 
+                # which helps in preventing issues such as vanishing or exploding gradients during the training of deep neural networks
+                # By keeping the scale of the weights in check, Xavier initialization allows for more stable and efficient training
                 init.xavier_uniform_(m.weight.data, gain=nn.init.calculate_gain("relu"))
                 if m.att:
                     init.xavier_uniform_(
@@ -155,6 +162,7 @@ class GcnEncoderGraph(nn.Module):
         normalize=False,
         dropout=0.0,
     ):
+        #starts the feature aggregation process
         conv_first = GraphConv(
             input_dim=input_dim,
             output_dim=hidden_dim,
@@ -164,6 +172,7 @@ class GcnEncoderGraph(nn.Module):
             gpu=self.gpu,
             att=self.att,
         )
+        # node representations by aggregating features from a broader neighborhood
         conv_block = nn.ModuleList(
             [
                 GraphConv(
@@ -179,6 +188,7 @@ class GcnEncoderGraph(nn.Module):
                 for i in range(num_layers - 2)
             ]
         )
+        #transforms the hidden dimension to the embedding dimension, producing the final node embeddings
         conv_last = GraphConv(
             input_dim=hidden_dim,
             output_dim=embedding_dim,
@@ -205,7 +215,7 @@ class GcnEncoderGraph(nn.Module):
             pred_layers.append(nn.Linear(pred_dim, label_dim))
             pred_model = nn.Sequential(*pred_layers)
         return pred_model
-
+    # This mask tensor indicates which positions in the tensor correspond to actual nodes and which correspond to padding.
     def construct_mask(self, max_nodes, batch_num_nodes):
         """ For each num_nodes in batch_num_nodes, the first num_nodes entries of the 
         corresponding column are 1's, and the rest are 0's (to be masked out).

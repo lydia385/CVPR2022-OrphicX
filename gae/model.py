@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from gae.BGCN.BGCN import VBGAE
 from gae.layers import GraphConvolution
-
 
 class VGAE(nn.Module):
     def __init__(self, input_feat_dim, hidden_dim1, output_dim, dropout):
@@ -86,5 +86,12 @@ class InnerProductDecoderMLP(nn.Module):
         z = F.relu(self.fc(z))
         z = torch.sigmoid(self.fc2(z))
         z = F.dropout(z, self.dropout, training=self.training)
+        print(z.shape)
         adj = self.act(torch.bmm(z, torch.transpose(z, 1, 2)))
         return adj
+
+
+class VBGAEMLP(VBGAE):
+    def __init__(self, nfeat_list, dropout, nlay, nblock, num_edges, decoder_hidden_dim1, decoder_hidden_dim2):
+        super(VBGAEMLP, self).__init__(nfeat_list, dropout, nlay, nblock, num_edges)
+        self.dc = InnerProductDecoderMLP(nfeat_list[-1], decoder_hidden_dim1, decoder_hidden_dim2, dropout, act=lambda x: x)
