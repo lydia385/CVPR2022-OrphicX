@@ -17,7 +17,7 @@ import scipy.sparse as sp
 from tensorboardX import SummaryWriter
 
 import causaleffect
-from gae.model import VGAE3MLP
+from gae.model import VBGAEMLP, VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
 
 sys.path.append('gnnexp')
@@ -71,32 +71,45 @@ if torch.cuda.is_available():
 np.random.seed(args.seed)
 random.seed(args.seed)
 
+#give label to each node
 def graph_labeling(G):
+    # give a label to each node ==1
     for node in G:
         G.nodes[node]['string'] = 1
     old_strings = tuple([G.nodes[node]['string'] for node in G])
     for iter_num in range(100):
+        # add information of all neighborhood to features of each node
         for node in G:
             string = sorted([G.nodes[neigh]['string'] for neigh in G.neighbors(node)])
             G.nodes[node]['concat_string'] =  tuple([G.nodes[node]['string']] + string)
+        #creates a dictionary d which maps each node to its concat_string
         d = nx.get_node_attributes(G,'concat_string')
         nodes,strings = zip(*{k: d[k] for k in sorted(d, key=d.get)}.items())
         map_string = dict([[string, i+1] for i, string in enumerate(sorted(set(strings)))])
+        #This ensures that similar neighborhoods (in terms of labels) get the same new label.
         for node in nodes:
             G.nodes[node]['string'] = map_string[G.nodes[node]['concat_string']]
         new_strings = tuple([G.nodes[node]['string'] for node in G])
+        #check if the new label is the same with old one
         if old_strings == new_strings:
             break
         else:
             old_strings = new_strings
     return G
 
+#normalization ensures that the node features are scaled appropriately based on the degree of the nodes.
 def preprocess_graph(adj):
+    #only the non-zero elements are stored along with their row and column indices.
     adj = sp.coo_matrix(adj)
+    # ensuring each node is connected to itself. This is a common practice to include a node's own features during aggregation
     adj_ = adj + sp.eye(adj.shape[0])
+    #Calculates the degree of each node + rohom
     rowsum = np.array(adj_.sum(1))
+    #inverse square root of the degree matrix.
     degree_mat_inv_sqrt = sp.diags(np.power(rowsum, -0.5).flatten())
+    #normlize with An=D^-0.5*A(with self-loop)*D^-0.5
     adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
+    #rj3oha
     return sparse_mx_to_torch_sparse_tensor(adj_normalized)
 
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
@@ -122,7 +135,8 @@ def main():
     tg_G = torch_geometric.utils.from_networkx(nx.from_numpy_array(adj))
     features = torch.tensor(cg_dict["feat"][0], dtype=torch.float)
     num_classes = max(label)+1
-    
+
+
     input_dim = cg_dict["feat"].shape[2]
     classifier = models.GcnEncoderNode(
         input_dim=input_dim,
@@ -147,6 +161,8 @@ def main():
     label_onehot = torch.eye(400, dtype=torch.float)
     def extract_neighborhood(node_idx):
         """Returns the neighborhood of a given ndoe."""
+        
+        
         mapping, edge_idxs, node_idx_new, edge_mask = torch_geometric.utils.k_hop_subgraph(int(node_idx), args.n_hops, tg_G.edge_index, relabel_nodes=True)
         node_idx_new = node_idx_new.item()
         sub_adj = torch_geometric.utils.to_dense_adj(edge_idxs)[0]
@@ -167,12 +183,14 @@ def main():
             hop_feat += [pow3_adj[node_idx_new]]
             hop_feat = torch.stack(hop_feat).t()
             sub_feat = torch.cat((sub_feat, hop_feat), dim=1)
+        # G = graph_labeling(nx.from_numpy_array(sub_adj.numpy()))
         if args.graph_labelling:
             G = graph_labeling(nx.from_numpy_array(sub_adj.numpy()))
             graph_label = np.array([G.nodes[node]['string'] for node in G])
             graph_label_onehot = label_onehot[graph_label]
             sub_feat = torch.cat((sub_feat, graph_label_onehot), dim=1)
         sub_label = torch.from_numpy(label[mapping])
+
         return {
             "node_idx_new": node_idx_new,
             "feat": feat.unsqueeze(0).to(device),
@@ -184,12 +202,17 @@ def main():
             "adj_label": adj_label.unsqueeze(0).to(device),
             "graph_size": mapping.shape[-1],
             "pos_weight": pos_weight.unsqueeze(0).to(device),
-            "norm": norm.unsqueeze(0).to(device)
+            "norm": norm.unsqueeze(0).to(device),
         }
-
+    #TODO: alpha_adj et beta_adj ????!!!
     def eval_task(node_idx):
         data = dataset[node_idx]
-        recovered, mu, logvar = model(data['sub_feat'], data['adj_norm'])
+        # recovered, mu, logvar = model(data['sub_feat'], data['adj_norm'])
+        recovered, _, mu, logvar, kld_loss, drop_rates  = model(data['sub_feat'], data['adj_norm'],
+                            warm_up=wup, training=True,
+                            mul_type=mul_type,
+                            graph_size=data["graph_size"]
+                            )
         recovered_adj = torch.sigmoid(recovered)
         nll_loss = criterion(recovered, mu, logvar, data).mean()
         org_logits = classifier(data['feat'], data['sub_adj'])[0][0, data['node_idx_new']]
@@ -286,7 +309,6 @@ def main():
         args.encoder_output, args.decoder_hidden1, args.decoder_hidden2,
         args.K, args.dropout
     ).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     num_nodes = label.shape[0]
     train_idxs = np.array(cg_dict['train_idx'])
@@ -306,18 +328,55 @@ def main():
     num_test = len(test_idxs)
     dataset = dict([[node_idx,extract_neighborhood(node_idx)] for node_idx in train_idxs])
     dataset.update(dict([[node_idx,extract_neighborhood(node_idx)] for node_idx in test_idxs]))
+
+
+    # feat dim = 14
+    nfeat_list = [feat_dim, 7, 5, 5]
+    nlay = 4
+    nblock = 1
+    # num_edges = int(adj.nnz/2)
+    first_node_idx, first_data = next(iter(dataset.items()))
+    # print(first_data['adj_norm'].shape)
+    # return
+    num_edges = first_data['graph_size']  ** 2
+    dropout = 0
+    lr = 0.005
+    weight_decay = 5e-3
+    mul_type='norm_first'
+
+    
+    model = VBGAEMLP(
+        nfeat_list, dropout, nlay, nblock, num_edges, nfeat_list[-1], nfeat_list[-1]
+    ).to(device)
+
+    print("_"*50, "Model Summary", "_"*50)
+    print(model)
+    print("_"*100)
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
     val_idxs = list(test_idxs[:num_test//2])
     test_idxs = list(test_idxs[num_test//2:])
 
     criterion = gaeloss
 
-    def train_task(node_idx):
+    def train_task(node_idx ):
         data = dataset[node_idx]
-        print("---"*40, "shapes")
-        print(data["sub_feat"].shape)
-        mu, logvar = model.encode(data['sub_feat'], data['adj_norm'])
-        sample_mu = model.reparameterize(mu, logvar)
-        recovered = model.dc(sample_mu)
+        wup=1
+        # mu, logvar = model.encode(data['sub_feat'], data['adj_norm'])
+        # sample_mu = model.reparameterize(mu, logvar)
+        # recovered = model.dc(sample_mu)
+        adj_norm = preprocess_graph(adj)
+
+        recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
+                            x=data['sub_feat'],
+                            adj_normt=data['adj_norm'],
+                            warm_up=wup, training=True,
+                            mul_type=mul_type,
+                            graph_size=data["graph_size"]
+                            )
+        print("------------shape",sample_mu.shape)
+        print("------shape mu", mu.shape)
         nll_loss = criterion(recovered, mu, logvar, data).mean()
         org_logits = classifier(data['feat'], data['sub_adj'])[0][0, data['node_idx_new']]
         alpha_mu = torch.zeros_like(mu)
@@ -328,7 +387,37 @@ def main():
         alpha_sparsity = alpha_size/org_size
         masked_alpha_adj = alpha_adj * data['sub_adj']
         alpha_logits = classifier(data['feat'], masked_alpha_adj)[0][0,data['node_idx_new']]
-        return nll_loss, org_logits, alpha_logits, alpha_sparsity
+
+        l2_reg = None
+        block_index = 0
+        for layer in range(nlay):
+            l2_reg_lay = None
+            if layer==0:
+                for param in model.gcs[str(block_index)].parameters():
+                    if l2_reg_lay is None:
+                        l2_reg_lay = (param**2).sum()
+                    else:
+                        l2_reg_lay = l2_reg_lay + (param**2).sum()
+                block_index += 1
+                
+            else:
+                for iii in range(nblock):
+                    for param in model.gcs[str(block_index)].parameters():
+                        if l2_reg_lay is None:
+                            l2_reg_lay = (param**2).sum()
+                        else:
+                            l2_reg_lay = l2_reg_lay + (param**2).sum()
+                    block_index += 1
+                    
+            l2_reg_lay = (1-drop_rates[layer])*l2_reg_lay
+            
+            if l2_reg is None:
+                l2_reg = l2_reg_lay
+            else:
+                l2_reg += l2_reg_lay
+
+            l2_reg = weight_decay * l2_reg
+            return nll_loss, org_logits, alpha_logits, alpha_sparsity, kld_loss, l2_reg
 
     os.makedirs('explanation/%s' % args.output, exist_ok=True)
 
@@ -340,7 +429,7 @@ def main():
 
     if os.path.exists(ckpt_path) and not args.retrain:
         print("Load checkpoint from {}".format(ckpt_path))
-        checkpoint = torch.load(ckpt_path)
+        checkpoint = torch.load(ckpt_path,map_location=torch.device('cpu'))
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         start_epoch = checkpoint['epoch'] + 1
@@ -355,6 +444,8 @@ def main():
         start_time = time.time()
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
             batch = 0
+            wup = np.min([1.0, (epoch)/20])
+
             perm = np.random.permutation(num_train)
             train_losses = []
             for beg_ind in range(0, num_train, args.batch_size):
@@ -362,10 +453,17 @@ def main():
                 end_ind = min(beg_ind+args.batch_size, num_train)
                 perm_train_idxs = list(train_idxs[perm[beg_ind: end_ind]])
                 optimizer.zero_grad()
-                nll_loss, org_logits, alpha_logits, alpha_sparsity = zip(*map(train_task, perm_train_idxs))
+                nll_loss, org_logits, alpha_logits, alpha_sparsity, kld_loss, l2_reg = zip(*map(train_task, perm_train_idxs))
                 causal_loss = []
                 for idx in random.sample(perm_train_idxs, args.NX):
-                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, dataset[idx]['sub_adj'], dataset[idx]['feat'], node_idx=dataset[idx]['node_idx_new'], act=torch.sigmoid, device=device)
+                    _causal_loss, _ = causaleffect.joint_uncond(ceparams,
+                                                                model.dc,
+                                                                classifier,
+                                                                dataset[idx]['sub_adj'],
+                                                                dataset[idx]['feat'],
+                                                                node_idx=dataset[idx]['node_idx_new'], act=torch.sigmoid, 
+                                                                device=device
+                                                            )
                     causal_loss += [_causal_loss]
                 nll_loss = torch.stack(nll_loss).mean()
                 causal_loss = torch.stack(causal_loss).mean()
@@ -377,7 +475,7 @@ def main():
                 loss = args.coef_lambda * nll_loss + \
                     args.coef_causal * causal_loss + \
                     args.coef_kl * klloss + \
-                    args.coef_size * alpha_sparsity
+                    args.coef_size * alpha_sparsity + kld_loss + l2_reg
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1)
                 optimizer.step()
@@ -389,6 +487,8 @@ def main():
             writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
             writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
             writer.add_scalar("train/total_loss", train_loss, epoch)
+            writer.add_scalar("train/BGCN loss", kld_loss, epoch)
+            writer.add_scalar("train/l2 reg drop rate", l2_reg, epoch)
             val_loss = eval_model(val_idxs,'val')
             patient -= 1
             if val_loss < best_loss:
@@ -486,4 +586,4 @@ def main():
 
 if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-    main()               
+    main()

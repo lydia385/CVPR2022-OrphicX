@@ -257,15 +257,18 @@ class VBGAE(nn.Module):
         self.nfeat_list = nfeat_list
     
     def forward(self, x, warm_up, adj_normt, adj=None, training=True
-                , mul_type='norm_first', samp_type='rel_ber',):
+                , mul_type='norm_first', samp_type='rel_ber', graph_size=None):
+        print("here")
         logvar = 0
         mu = 0
         h_perv = x
         kld_loss = 0.0
         drop_rates = []
+        num_edges = graph_size ** 2
+        num_nodes = graph_size 
         for i in range(self.nlay-1):
             # get mask and drop rate probality in the next layer 
-            mask_vec, drop_prob = self.drpcons[i].get_weight(self.nblock*self.num_edges, training, samp_type)
+            mask_vec, drop_prob = self.drpcons[i].get_weight(self.nblock*num_edges, training, samp_type)
             # squeeze to play on dimensions if input is of shape: (Ax1xBxCx1xD) result :  (AxBxCxD)(AxBxCxD) 
             mask_vec = torch.squeeze(mask_vec)
             # append drop prob to the list where each layer has its own drop rate
@@ -273,7 +276,7 @@ class VBGAE(nn.Module):
             # start by first layer: it has a special treatment 
             if i==0:
                 # cut mast matrix to the number of edges and reshape it based on Num_nodes X Num_nodes aka adj matrix
-                mask_mat = torch.reshape(mask_vec[:self.num_edges], (self.num_nodes, self.num_nodes)).cpu()
+                mask_mat = torch.reshape(mask_vec[:num_edges], (num_nodes, num_nodes)).cpu()
                 
                 if mul_type=='norm_sec':
                     # multiply adj by mask add self loop then normalize
@@ -281,8 +284,11 @@ class VBGAE(nn.Module):
                 elif mul_type=='norm_first':
                     # normalize adj matr multiply adj by mask
          
+                    
                     adj_lay = torch.mul(mask_mat, adj_normt).cpu()
                 
+                x = torch.squeeze(x)
+                adj_lay = torch.squeeze(adj_lay)
                 x = F.relu(self.gcs[str(i)](x, adj_lay))
                 x = F.dropout(x, self.dropout, training=training)
             
@@ -292,15 +298,17 @@ class VBGAE(nn.Module):
                 for j in range(self.nblock):
                     # Reshape the appropriate segment of the mask vector to form a mask matrix
                     # for the current block, matching the adjacency matrix dimensions
-                    mask_mat = torch.reshape(mask_vec[j*self.num_edges:(j+1)*self.num_edges]
-                                             , (self.num_nodes, self.num_nodes)).cpu()
+                    mask_mat = torch.reshape(mask_vec[j*num_edges:(j+1)*num_edges]
+                                             , (num_nodes, num_nodes)).cpu()
                      
                     # same as layer 1
                     if mul_type=='norm_sec':
                         adj_lay = normalize_torch(torch.mul(mask_mat, adj) + torch.eye(adj.shape[0]).cpu())
                     elif mul_type=='norm_first':
+
                         adj_lay = torch.mul(mask_mat, adj_normt).cpu()
-                    
+                    x = torch.squeeze(x)
+                    adj_lay = torch.squeeze(adj_lay)                   
                     # if we are not in last layer : (last 2 layers are for output)
                     if i<(self.nlay-2):
                         if j==0:
@@ -314,6 +322,7 @@ class VBGAE(nn.Module):
                 #print(i,self.nlay-1)
                 if i<(self.nlay-1):
                     x = x_out
+
                     x = F.dropout(F.relu(x), self.dropout, training=training)
             
             
@@ -330,4 +339,6 @@ class VBGAE(nn.Module):
             z= mu
         kld_loss =  warm_up * kld_loss
         drop_rates = torch.stack(drop_rates)
+        z = z.unsqueeze(dim=0)
+        mu = mu.unsqueeze(dim=0)
         return self.dc(z), z, mu, logvar, kld_loss, drop_rates

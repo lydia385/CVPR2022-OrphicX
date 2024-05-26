@@ -360,6 +360,8 @@ def main():
             train_losses = []
             for batch_idx, data in enumerate(train_dataset):
                 optimizer.zero_grad()
+                print("SHAPES", "---"*50)
+                print("sub_feat", data["sub_feat"].shape)
                 mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)

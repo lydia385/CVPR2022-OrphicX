@@ -83,12 +83,17 @@ class InnerProductDecoderMLP(nn.Module):
         torch.nn.init.zeros_(self.fc2.bias)
 
     def forward(self, z):
+        print("-"*50, "z shape", "-"*50)
+        print(z.shape)
+        print(z)
+        print("-"*50, "-"*50)
         z = F.relu(self.fc(z))
         z = torch.sigmoid(self.fc2(z))
         z = F.dropout(z, self.dropout, training=self.training)
         print(z.shape)
         adj = self.act(torch.bmm(z, torch.transpose(z, 1, 2)))
         return adj
+
 
 
 class VBGAEMLP(VBGAE):

@@ -55,7 +55,15 @@ class BGraphConvolution(nn.Module):
             self.bias.data.uniform_(-stdv, stdv)
     
     def forward(self, inp, adj):
+        print("--"*50)
+        print("weight dim", self.weight.shape)
+        print("inp dim", inp.shape)
+
+        
         support = torch.mm(inp, self.weight)
+
+        print("adj dim", adj.shape)
+        print("supp dim", support.shape)
         output = torch.mm(adj, support)
         if self.bias is not None:
             return output + self.bias
