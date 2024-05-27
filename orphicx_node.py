@@ -33,7 +33,7 @@ parser.add_argument('--encoder_output', type=int, default=16, help='Dim of outpu
 parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
 parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder hidden layer 2.')
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
-parser.add_argument('-e', '--epoch', type=int, default=300, help='Number of training epochs.')
+parser.add_argument('-e', '--epoch', type=int, default=50, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
 parser.add_argument('--lr', type=float, default=0.003, help='Initial learning rate.')
 parser.add_argument('--dropout', type=float, default=0., help='Dropout rate (1 - keep probability).')
@@ -313,8 +313,6 @@ def main():
 
     def train_task(node_idx):
         data = dataset[node_idx]
-        print("---"*40, "shapes")
-        print(data["sub_feat"].shape)
         mu, logvar = model.encode(data['sub_feat'], data['adj_norm'])
         sample_mu = model.reparameterize(mu, logvar)
         recovered = model.dc(sample_mu)

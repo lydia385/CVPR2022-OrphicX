@@ -29,9 +29,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--encoder_hidden1', type=int, default=32, help='Number of units in hidden layer 1.')
 parser.add_argument('--encoder_hidden2', type=int, default=16, help='Number of units in hidden layer 2.')
-parser.add_argument('--encoder_output', type=int, default=5, help='Dim of output of VGAE encoder.')
-parser.add_argument('--decoder_hidden1', type=int, default=5, help='Number of units in decoder hidden layer 1.')
-parser.add_argument('--decoder_hidden2', type=int, default=5, help='Number of units in decoder  hidden layer 2.')
+parser.add_argument('--encoder_output', type=int, default=16, help='Dim of output of VGAE encoder.')
+parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
+parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder  hidden layer 2.')
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
 parser.add_argument('-e', '--epoch', type=int, default=50, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
@@ -51,6 +51,7 @@ parser.add_argument('--coef_lambda', type=float, default=0.1, help='Coefficient 
 parser.add_argument('--coef_kl', type=float, default=0.2, help='Coefficient of gae loss.')
 parser.add_argument('--coef_causal', type=float, default=1.0, help='Coefficient of causal loss.')
 parser.add_argument('--coef_size', type=float, default=0.1, help='Coefficient of size loss.')
+parser.add_argument('--bayesian_coef', type=float, default=0.2, help='Coeficient of bayesian loss')
 parser.add_argument('--plot_info_flow', action='store_true')
 parser.add_argument('--retrain', action='store_true')
 parser.add_argument('--patient', type=int, default=100, help='Patient for early stopping.')
@@ -236,7 +237,7 @@ def main():
     def eval_model(node_idxs, prefix=''):
         with torch.no_grad():
             labels = torch.from_numpy(label[node_idxs]).long().to(device)
-            nll_loss, org_logits, recovered_logits, alpha_logits, beta_logits, alpha_sparsity = zip(*map(eval_task, node_idxs))
+            nll_loss, org_logits, recovered_logits, alpha_logits, beta_logits, alpha_sparsity  = zip(*map(eval_task, node_idxs))
             causal_loss = []
             beta_info = []
             for idx in random.sample(node_idxs, args.NX):
@@ -274,7 +275,7 @@ def main():
             loss = args.coef_lambda * nll_loss + \
                 args.coef_causal * causal_loss + \
                 args.coef_kl * klloss + \
-                args.coef_size * alpha_sparsity
+                args.coef_size * alpha_sparsity 
             writer.add_scalar("%s/total_loss"%prefix, loss, epoch)
             writer.add_scalar("%s/nll"%prefix, nll_loss, epoch)
             writer.add_scalar("%s/causal"%prefix, causal_loss, epoch)
@@ -331,7 +332,7 @@ def main():
 
 
     # feat dim = 14
-    nfeat_list = [feat_dim, 7, 5, 5]
+    nfeat_list = [feat_dim, 32, 16, 16]
     nlay = 4
     nblock = 1
     # num_edges = int(adj.nnz/2)
@@ -474,13 +475,13 @@ def main():
                 loss = args.coef_lambda * nll_loss + \
                     args.coef_causal * causal_loss + \
                     args.coef_kl * klloss + \
-                    args.coef_size * alpha_sparsity + kld_loss + l2_reg
+                    args.coef_size * alpha_sparsity + args.bayesian_coef * kld_loss + l2_reg
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1)
                 optimizer.step()
                 sys.stdout.flush()
-                train_losses += [[nll_loss.item(), causal_loss.item(), klloss.item(), alpha_sparsity.item(), loss.item()]]
-            nll_loss, causal_loss, klloss, size_loss, train_loss = np.mean(train_losses, axis=0)
+                train_losses += [[nll_loss.item(), causal_loss.item(), klloss.item(), alpha_sparsity.item(), kld_loss.item(), l2_reg.item(), loss.item()]]
+            nll_loss, causal_loss, klloss, size_loss, kdl_loss, l2_reg, train_loss = np.mean(train_losses, axis=0)
             writer.add_scalar("train/nll", nll_loss, epoch)
             writer.add_scalar("train/causal", causal_loss, epoch)
             writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
@@ -513,7 +514,14 @@ def main():
             data = dataset[idx]
             org_probs = F.softmax(classifier(data['feat'], data['sub_adj'])[0][:,data['node_idx_new']], dim=1)
             pred_labels = torch.argmax(org_probs, axis=1)
-            mu, _ = model.encode(data['sub_feat'], data['adj_norm'])
+            #mu, _ = model.encode(data['sub_feat'], data['adj_norm'])
+            _, _, mu, _, _, _  = model(
+                            x=data['sub_feat'],
+                            adj_normt=data['adj_norm'],
+                            warm_up=wup, training=False,
+                            mul_type=mul_type,
+                            graph_size=data["graph_size"]
+                            )
             alpha_mu = torch.zeros_like(mu)
             alpha_mu[:,:,:args.K] = mu[:,:,:args.K]
             alpha_adj = torch.sigmoid(model.dc(alpha_mu))
