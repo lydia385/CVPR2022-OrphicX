@@ -29,11 +29,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--encoder_hidden1', type=int, default=32, help='Number of units in hidden layer 1.')
 parser.add_argument('--encoder_hidden2', type=int, default=16, help='Number of units in hidden layer 2.')
-parser.add_argument('--encoder_output', type=int, default=16, help='Dim of output of VGAE encoder.')
-parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
-parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder  hidden layer 2.')
+parser.add_argument('--encoder_output', type=int, default=5, help='Dim of output of VGAE encoder.')
+parser.add_argument('--decoder_hidden1', type=int, default=5, help='Number of units in decoder hidden layer 1.')
+parser.add_argument('--decoder_hidden2', type=int, default=5, help='Number of units in decoder  hidden layer 2.')
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
-parser.add_argument('-e', '--epoch', type=int, default=300, help='Number of training epochs.')
+parser.add_argument('-e', '--epoch', type=int, default=50, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
 parser.add_argument('--lr', type=float, default=0.003, help='Initial learning rate.')
 parser.add_argument('--dropout', type=float, default=0., help='Dropout rate (1 - keep probability).')
@@ -375,8 +375,6 @@ def main():
                             mul_type=mul_type,
                             graph_size=data["graph_size"]
                             )
-        print("------------shape",sample_mu.shape)
-        print("------shape mu", mu.shape)
         nll_loss = criterion(recovered, mu, logvar, data).mean()
         org_logits = classifier(data['feat'], data['sub_adj'])[0][0, data['node_idx_new']]
         alpha_mu = torch.zeros_like(mu)
@@ -445,7 +443,6 @@ def main():
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
             batch = 0
             wup = np.min([1.0, (epoch)/20])
-
             perm = np.random.permutation(num_train)
             train_losses = []
             for beg_ind in range(0, num_train, args.batch_size):
@@ -468,6 +465,8 @@ def main():
                 nll_loss = torch.stack(nll_loss).mean()
                 causal_loss = torch.stack(causal_loss).mean()
                 alpha_logits = torch.stack(alpha_logits)
+                l2_reg = torch.stack(l2_reg).mean()
+                kld_loss = torch.stack(kld_loss).mean()
                 org_logits = torch.stack(org_logits)
                 org_probs = F.softmax(org_logits, dim=1)
                 klloss = F.kl_div(F.log_softmax(alpha_logits, dim=1), org_probs, reduction='mean')

@@ -256,9 +256,9 @@ class VBGAE(nn.Module):
         # feature list is number of features in each layer
         self.nfeat_list = nfeat_list
     
-    def forward(self, x, warm_up, adj_normt, adj=None, training=True
+    def forward(self, x, adj_normt, warm_up=1, adj=None, training=True
                 , mul_type='norm_first', samp_type='rel_ber', graph_size=None):
-        print("here")
+
         logvar = 0
         mu = 0
         h_perv = x

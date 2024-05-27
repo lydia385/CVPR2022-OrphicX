@@ -31,7 +31,7 @@ parser.add_argument('--encoder_hidden1', type=int, default=32, help='Number of u
 parser.add_argument('--encoder_hidden2', type=int, default=16, help='Number of units in hidden layer 2.')
 parser.add_argument('--encoder_output', type=int, default=16, help='Dim of output of VGAE encoder.')
 parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
-parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder  hidden layer 2.')
+parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder hidden layer 2.')
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
 parser.add_argument('-e', '--epoch', type=int, default=300, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
@@ -365,7 +365,15 @@ def main():
                 nll_loss, org_logits, alpha_logits, alpha_sparsity = zip(*map(train_task, perm_train_idxs))
                 causal_loss = []
                 for idx in random.sample(perm_train_idxs, args.NX):
-                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, dataset[idx]['sub_adj'], dataset[idx]['feat'], node_idx=dataset[idx]['node_idx_new'], act=torch.sigmoid, device=device)
+                    _causal_loss, _ = causaleffect.joint_uncond(ceparams,
+                                                                model.dc, 
+                                                                classifier, 
+                                                                dataset[idx]['sub_adj'],
+                                                                dataset[idx]['feat'], 
+                                                                node_idx=dataset[idx]['node_idx_new'],
+                                                                act=torch.sigmoid, 
+                                                                device=device
+                                                            )
                     causal_loss += [_causal_loss]
                 nll_loss = torch.stack(nll_loss).mean()
                 causal_loss = torch.stack(causal_loss).mean()

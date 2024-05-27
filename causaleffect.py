@@ -40,7 +40,7 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
 
     alpha = torch.randn((params['Nalpha'], adj.shape[-1], params['K']), device=device).mul(alpha_std).add_(alpha_mu).repeat(1,params['Nbeta'],1).view(params['Nalpha'] * params['Nbeta'] , adj.shape[-1], params['K'])
     beta = torch.randn((params['Nalpha'] * params['Nbeta'], adj.shape[-1], params['L']), device=device).mul(beta_std).add_(beta_mu)
-    zs = torch.cat([alpha, beta], dim=-1)
+    zs = torch.cat([alpha, beta], dim=-1)  
     xhat = act(decoder(zs)) * adj
     if node_idx is None:
         logits = classifier(feat, xhat)[0]
