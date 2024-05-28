@@ -29,11 +29,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--encoder_hidden1', type=int, default=32, help='Number of units in hidden layer 1.')
 parser.add_argument('--encoder_hidden2', type=int, default=16, help='Number of units in hidden layer 2.')
-parser.add_argument('--encoder_output', type=int, default=16, help='Dim of output of VGAE encoder.')
-parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
-parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder  hidden layer 2.')
+parser.add_argument('--encoder_output', type=int, default=8, help='Dim of output of VGAE encoder.')
+parser.add_argument('--decoder_hidden1', type=int, default=8, help='Number of units in decoder hidden layer 1.')
+parser.add_argument('--decoder_hidden2', type=int, default=8, help='Number of units in decoder  hidden layer 2.')
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
-parser.add_argument('-e', '--epoch', type=int, default=50, help='Number of training epochs.')
+parser.add_argument('-e', '--epoch', type=int, default=100, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
 parser.add_argument('--lr', type=float, default=0.003, help='Initial learning rate.')
 parser.add_argument('--dropout', type=float, default=0., help='Dropout rate (1 - keep probability).')
@@ -332,7 +332,7 @@ def main():
 
 
     # feat dim = 14
-    nfeat_list = [feat_dim, 32, 16, 16]
+    nfeat_list = [feat_dim, 32, 16, 8, 8]
     nlay = 4
     nblock = 1
     # num_edges = int(adj.nnz/2)
@@ -475,7 +475,7 @@ def main():
                 loss = args.coef_lambda * nll_loss + \
                     args.coef_causal * causal_loss + \
                     args.coef_kl * klloss + \
-                    args.coef_size * alpha_sparsity + args.bayesian_coef * kld_loss + l2_reg
+                    args.coef_size * alpha_sparsity + args.bayesian_coef * kld_loss + 0.1 * l2_reg
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1)
                 optimizer.step()
