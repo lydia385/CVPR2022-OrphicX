@@ -15,10 +15,15 @@ import matplotlib.pyplot as plt
 import argparse
 import scipy.sparse as sp
 from tensorboardX import SummaryWriter
+from brainGNN.dataset.brain_dataset import BrainDataset
+from brainGNN.get_transform import get_transform
+from brainGNN.models.brainnn import build_model, load_checkpoint
 
+from brainGNN.utils import get_y
 import causaleffect
 from gae.model import VBGAEMLP, VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
+from torch_geometric.utils.convert import to_scipy_sparse_matrix 
 
 sys.path.append('gnnexp')
 import models
@@ -55,6 +60,46 @@ parser.add_argument('--bayesian_coef', type=float, default=0.2, help='Coeficient
 parser.add_argument('--plot_info_flow', action='store_true')
 parser.add_argument('--retrain', action='store_true')
 parser.add_argument('--patient', type=int, default=100, help='Patient for early stopping.')
+
+#BrainGNN arg 
+
+parser.add_argument('--dataset_name', type=str,
+                    choices=['PPMI', 'HIV', 'BP', 'ABCD', 'PNC', 'ABIDE'],
+                    default="BP")
+parser.add_argument('--view', type=int, default=1)
+parser.add_argument('--node_features', type=str,
+                    choices=['identity', 'degree', 'degree_bin', 'LDP', 'node2vec', 'adj', 'diff_matrix',
+                                'eigenvector', 'eigen_norm'],
+                    default='adj')
+parser.add_argument('--pooling', type=str,
+                    choices=['sum', 'concat', 'mean'],
+                    default='concat')
+
+
+parser.add_argument('--model_name', type=str, default='gcn')
+parser.add_argument('--gcn_mp_type', type=str, default="weighted_sum") 
+# gat_mp_type choices: attention_weighted, attention_edge_weighted, sum_attention_edge, edge_node_concate, node_concate
+parser.add_argument('--gat_mp_type', type=str, default="attention_weighted") 
+
+parser.add_argument('--enable_nni', action='store_true')
+parser.add_argument('--n_GNN_layers', type=int, default=2)
+parser.add_argument('--n_MLP_layers', type=int, default=1)
+parser.add_argument('--num_heads', type=int, default=2)
+parser.add_argument('--hidden_dim', type=int, default=360)
+parser.add_argument('--gat_hidden_dim', type=int, default=8)
+parser.add_argument('--edge_emb_dim', type=int, default=256)
+parser.add_argument('--bucket_sz', type=float, default=0.05)
+# parser.add_argument('--weight_decay', type=float, default=1e-4)
+parser.add_argument('--dropout_braingnn', type=float, default=0.5)
+
+parser.add_argument('--repeat', type=int, default=1)
+parser.add_argument('--k_fold_splits', type=int, default=5)
+parser.add_argument('--test_interval', type=int, default=5)
+parser.add_argument('--train_batch_size', type=int, default=16)
+parser.add_argument('--test_batch_size', type=int, default=16)
+
+parser.add_argument('--diff', type=float, default=0.2)
+parser.add_argument('--mixup', type=int, default=1) #[0, 1]
 
 args = parser.parse_args()
 if args.output is None:
@@ -139,6 +184,20 @@ def main():
 
 
     input_dim = cg_dict["feat"].shape[2]
+
+    dataset = "we load dataset here"
+    
+    dataset = BrainDataset(root='abdi-dataset/abdi',
+                           name="ABIDE",
+                           pre_transform=get_transform(args.node_features))
+    
+    y = get_y(dataset)
+    input_dim = dataset[0].x.shape[1]
+    nodes_num = dataset.num_nodes
+    
+
+
+    
     classifier = models.GcnEncoderNode(
         input_dim=input_dim,
         hidden_dim=20,
@@ -148,7 +207,10 @@ def main():
         bn=False,
         args=argparse.Namespace(gpu=args.gpu,bias=True,method=None)
     ).to(device)
-    classifier.load_state_dict(ckpt["model_state"])
+    # classifier.load_state_dict(ckpt["model_state"], )
+    # classifier = build_model(args, device, "brainGNN",input_dim , nodes_num )
+    # load_checkpoint(classifier, "ckpt\model_brainGnn.pth" )
+
     classifier.eval()
 
     ceparams = {
@@ -337,10 +399,8 @@ def main():
     nblock = 1
     # num_edges = int(adj.nnz/2)
     first_node_idx, first_data = next(iter(dataset.items()))
-    print("ORPHIIICX")
-    print(first_data['sub_feat'].shape)
-    print(first_data['adj_norm'].shape)
-    return
+    # print(first_data['adj_norm'].shape)
+    # return
     num_edges = first_data['graph_size']  ** 2
     dropout = 0
     lr = 0.005
@@ -369,7 +429,11 @@ def main():
         # mu, logvar = model.encode(data['sub_feat'], data['adj_norm'])
         # sample_mu = model.reparameterize(mu, logvar)
         # recovered = model.dc(sample_mu)
-        adj_norm = preprocess_graph(adj)
+
+        print("ORPHIIIIIICX")
+        print(data['sub_feat'])
+        print(data['adj_norm'])
+        return
 
         recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
                             x=data['sub_feat'],
