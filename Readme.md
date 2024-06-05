@@ -13,3 +13,6 @@ python orphicx_lyas_brain.py  --dataset syn1 --plot_info_flow
 python orphicx_node.py  --dataset syn4 --plot_info_flow
 python orphicx_graph.py  --dataset Mutagenicity --plot_info_flow
 python orphicx_graph.py  --dataset NCI1 --plot_info_flow
+
+### lyax
+python orphicx_graph.py  --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate

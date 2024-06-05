@@ -88,7 +88,7 @@ parser.add_argument('--view', type=int, default=1)
 parser.add_argument('--node_features', type=str,
                     choices=['identity', 'degree', 'degree_bin', 'LDP', 'node2vec', 'adj', 'diff_matrix',
                                 'eigenvector', 'eigen_norm'],
-                    default='degree')
+                    default='adj')
 parser.add_argument('--pooling', type=str,
                     choices=['sum', 'concat', 'mean'],
                     default='concat')
@@ -103,7 +103,7 @@ parser.add_argument('--enable_nni', action='store_true')
 parser.add_argument('--n_GNN_layers', type=int, default=2)
 parser.add_argument('--n_MLP_layers', type=int, default=1)
 parser.add_argument('--num_heads', type=int, default=2)
-parser.add_argument('--hidden_dim', type=int, default=360)
+parser.add_argument('--hidden_dim', type=int, default=256)
 parser.add_argument('--gat_hidden_dim', type=int, default=8)
 parser.add_argument('--edge_emb_dim', type=int, default=256)
 parser.add_argument('--bucket_sz', type=float, default=0.05)
@@ -207,20 +207,21 @@ def main():
     
 
     # Explain Graph prediction
-    classifier = models.GcnEncoderGraph(
-        input_dim=input_dim,
-        hidden_dim=20,
-        embedding_dim=20,
-        label_dim=num_classes,
-        num_layers=3,
-        bn=False,
-        args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
-    ).to(device)
+    # classifier = models.GcnEncoderGraph(
+    #     input_dim=input_dim,
+    #     hidden_dim=20,
+    #     embedding_dim=20,
+    #     label_dim=num_classes,
+    #     num_layers=3,
+    #     bn=False,
+    #     args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
+    # ).to(device)
 
-    classifier.load_state_dict(ckpt["model_state"], )
-    classifier = build_model(args, device, "brainGNN",input_dim , nodes_num )
+   # classifier.load_state_dict(ckpt["model_state"], )
+    classifier = build_model(args, device, "gcn",input_dim , nodes_num )
+    print("class",classifier)
     load_checkpoint(classifier, "ckpt\model_brainGnn.pth" )
-    #TOdo classifier.eval()
+    classifier.eval()
 
 
     # # load state_dict (obtained by model.state_dict() when saving checkpoint)

@@ -39,8 +39,10 @@ def build_model(args, device, model_name, num_features, num_nodes):
     return model
 
 
-def load_checkpoint(model, optimizer, losses, load_path):
-    checkpoint = torch.load(load_path)
+def load_checkpoint(model, load_path):
+    
+    checkpoint = torch.load(load_path,map_location=torch.device('cpu') )
+    
     model.load_state_dict(checkpoint['model_state_dict'])
     epoch = checkpoint['epoch'],
     print(f"model has trained for {epoch} of epochs")
