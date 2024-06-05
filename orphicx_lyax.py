@@ -33,7 +33,7 @@ parser.add_argument('--encoder_output', type=int, default=8, help='Dim of output
 parser.add_argument('--decoder_hidden1', type=int, default=8, help='Number of units in decoder hidden layer 1.')
 parser.add_argument('--decoder_hidden2', type=int, default=8, help='Number of units in decoder  hidden layer 2.')
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
-parser.add_argument('-e', '--epoch', type=int, default=224, help='Number of training epochs.')
+parser.add_argument('-e', '--epoch', type=int, default=100, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
 parser.add_argument('--lr', type=float, default=0.003, help='Initial learning rate.')
 parser.add_argument('--dropout', type=float, default=0., help='Dropout rate (1 - keep probability).')
@@ -337,10 +337,8 @@ def main():
     nblock = 1
     # num_edges = int(adj.nnz/2)
     first_node_idx, first_data = next(iter(dataset.items()))
-    print("ORPHIIICX")
-    print(first_data['sub_feat'].shape)
-    print(first_data['adj_norm'].shape)
-    return
+    # print(first_data['adj_norm'].shape)
+    # return
     num_edges = first_data['graph_size']  ** 2
     dropout = 0
     lr = 0.005

@@ -26,6 +26,7 @@ import networkx as nx
 import torch.nn.functional as F
 from brainGNN.dataset.brain_dataset import BrainDataset, ind_val_to_dense
 from brainGNN.get_transform import get_transform
+from brainGNN.models.brainnn import build_model, load_checkpoint
 from brainGNN.utils import get_y
 import causaleffect
 from torch import nn, optim
@@ -152,13 +153,18 @@ def graph_labeling(G):
             old_strings = new_strings
     return G
 
-def train_val_dataset(dataset, val_split=0.25):
-    train_idx, val_idx = train_test_split(list(range(len(dataset))), test_size=val_split)
+def train_val_dataset(dataset, val_split=0.25,test_split=0.25):
+    train_val_idx, test_idx = train_test_split(list(range(len(dataset))), test_size=test_split)
+    
+    train_idx, val_idx = train_test_split(train_val_idx, test_size=val_split)
+  
+    
     datasets = {}
     datasets['train'] = Subset(dataset, train_idx)
     datasets['val'] = Subset(dataset, val_idx)
-    return datasets
-
+    datasets['test'] = Subset(dataset, test_idx)
+    
+    return  train_idx, val_idx ,test_idx
 def preprocess_graph(adj):
     adj_ = adj + np.eye(adj.shape[0])
     rowsum = np.array(adj_.sum(1))
@@ -189,10 +195,7 @@ def main():
     cg_dict = ckpt["cg"] # get computation graph
     input_dim = cg_dict["feat"].shape[2] 
     num_classes = cg_dict["pred"].shape[2]
-    # print("input dim: ", input_dim, "; num classes: ", num_classes)
-    # print("FEATURES", cg_dict["feat"].shape)
-    # print(cg_dict["feat"])
-    # return
+    
         
     dataset = BrainDataset(root='abdi-dataset/abdi',
                            name="ABIDE",
@@ -200,26 +203,29 @@ def main():
     
     y = get_y(dataset)
     input_dim = dataset[0].x.shape[1]
-    # print("DATASET")
-    # print(dataset[0])
     nodes_num = dataset.num_nodes
     
 
     # Explain Graph prediction
-    # classifier = models.GcnEncoderGraph(
-    #     input_dim=input_dim,
-    #     hidden_dim=20,
-    #     embedding_dim=20,
-    #     label_dim=num_classes,
-    #     num_layers=3,
-    #     bn=False,
-    #     args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
-    # ).to(device)
+    classifier = models.GcnEncoderGraph(
+        input_dim=input_dim,
+        hidden_dim=20,
+        embedding_dim=20,
+        label_dim=num_classes,
+        num_layers=3,
+        bn=False,
+        args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
+    ).to(device)
+
+    classifier.load_state_dict(ckpt["model_state"], )
+    classifier = build_model(args, device, "brainGNN",input_dim , nodes_num )
+    load_checkpoint(classifier, "ckpt\model_brainGnn.pth" )
+    #TOdo classifier.eval()
+
 
     # # load state_dict (obtained by model.state_dict() when saving checkpoint)
     # classifier.load_state_dict(ckpt["model_state"])
     # classifier.eval()
-    print("Number of graphs:", cg_dict["adj"].shape[0])
     if args.output is None:
         args.output = args.dataset
 
@@ -287,47 +293,32 @@ def main():
         def __getitem__(self, idx):
             return self.graph_data[idx]
 
-    # train_idxs = np.array(cg_dict['train_idx'])
-    # val_idxs = np.array(cg_dict['val_idx'])
-    # test_idxs = np.array(cg_dict['test_idx'])
-    # print("I AM HERE")
-    # skf = StratifiedKFold(n_splits=args.k_fold_splits, shuffle=True)
     data_len = len(dataset)
-    print("data len", data_len)
-    # train_len = data_len * 0.8
-    # test_len = data_len - train_len
-    # train_idxs, test_idxs = torch.utils.data.random_split(range(data_len), [train_len, test_len])
-    # print(train_idxs, test_idxs)
-    # train_idxs, test_idxs = skf.split(dataset, y)
-    # print("SHAPES OF TRAIN AND TEST")
-    # print(train_idxs.shape, test_idxs.shape)
-    datasets = train_val_dataset(dataset)
-    print(datasets['train'].dataset)
-    train_len = len(datasets['train'])
-    test_len = len(datasets['val'])
+  
+    train_idx,val_idx,test_idx = train_val_dataset(dataset)
+ 
 
-    train_graphs = GraphSampler(range(train_len))
+    train_graphs = GraphSampler(train_idx)
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=0,
     )
-    val_graphs = GraphSampler(range(test_len))
+    val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
         val_graphs,
         batch_size=1000,
         shuffle=False,
         num_workers=0,
     )
-    test_graphs = GraphSampler(test_idxs)
+    test_graphs = GraphSampler(test_idx)
     test_dataset = torch.utils.data.DataLoader(
         test_graphs,
         batch_size=1000,
         shuffle=False,
         num_workers=0,
     )
-    return 
 
     def eval_model(dataset, prefix=''):
         model.eval()

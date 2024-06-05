@@ -2,7 +2,7 @@ conda activate orphicx
 loss function f gae optimizer
 
 ### Retrain OrphicX from scratch
-python orphicx_node.py  --dataset syn1 --output syn1_retrain --retrain
+python orphicx_lyax.py  --dataset syn1 --output syn1_retrain --retrain
 python orphicx_node.py  --dataset syn4 --output syn4_retrain --retrain
 python orphicx_graph.py  --dataset Mutagenicity --output mutag_retrain --retrain
 python orphicx_graph.py  --dataset NCI1 --output nci1_retrain --retrain
