@@ -5,9 +5,10 @@
 import argparse
 import os
 from networkx.algorithms.components.connected import connected_components
-
+from sklearn.model_selection import StratifiedKFold, train_test_split
 import sklearn.metrics as metrics
 from functools import partial
+from sklearn.model_selection import StratifiedKFold
 from tensorboardX import SummaryWriter
 
 import sys
@@ -19,13 +20,21 @@ import torch
 import random
 import numpy as np
 import pandas as pd
+import torch_geometric
 from tqdm import tqdm
 import networkx as nx
 import torch.nn.functional as F
+from brainGNN.dataset.brain_dataset import BrainDataset, ind_val_to_dense
+from brainGNN.get_transform import get_transform
+from brainGNN.models.brainnn import build_model, load_checkpoint
+from brainGNN.utils import get_y
 import causaleffect
 from torch import nn, optim
 from gae.model import VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
+from torch.utils.data import Subset
+from torch_geometric.loader import DataLoader
+
 
 import sys
 dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -71,6 +80,46 @@ parser.add_argument('--retrain', action='store_true')
 parser.add_argument('--patient', type=int, default=100, help='Patient for early stopping.')
 parser.add_argument('--plot_info_flow', action='store_true')
 
+#Brain GNN args
+
+parser.add_argument('--dataset_name', type=str,
+                    choices=['PPMI', 'HIV', 'BP', 'ABCD', 'PNC', 'ABIDE'],
+                    default="ABIDE")
+parser.add_argument('--view', type=int, default=1)
+parser.add_argument('--node_features', type=str,
+                    choices=['identity', 'degree', 'degree_bin', 'LDP', 'node2vec', 'adj', 'diff_matrix',
+                                'eigenvector', 'eigen_norm'],
+                    default='adj')
+parser.add_argument('--pooling', type=str,
+                    choices=['sum', 'concat', 'mean'],
+                    default='concat')
+
+
+parser.add_argument('--model_name', type=str, default='gcn')
+parser.add_argument('--gcn_mp_type', type=str, default="weighted_sum") 
+# gat_mp_type choices: attention_weighted, attention_edge_weighted, sum_attention_edge, edge_node_concate, node_concate
+parser.add_argument('--gat_mp_type', type=str, default="attention_weighted") 
+
+parser.add_argument('--enable_nni', action='store_true')
+parser.add_argument('--n_GNN_layers', type=int, default=2)
+parser.add_argument('--n_MLP_layers', type=int, default=1)
+parser.add_argument('--num_heads', type=int, default=2)
+parser.add_argument('--hidden_dim', type=int, default=256)
+parser.add_argument('--gat_hidden_dim', type=int, default=8)
+parser.add_argument('--edge_emb_dim', type=int, default=256)
+parser.add_argument('--bucket_sz', type=float, default=0.05)
+# parser.add_argument('--weight_decay', type=float, default=1e-4)
+parser.add_argument('--dropout_braingnn', type=float, default=0.5)
+
+parser.add_argument('--repeat', type=int, default=1)
+parser.add_argument('--k_fold_splits', type=int, default=5)
+parser.add_argument('--test_interval', type=int, default=5)
+parser.add_argument('--train_batch_size', type=int, default=16)
+parser.add_argument('--test_batch_size', type=int, default=16)
+
+parser.add_argument('--diff', type=float, default=0.2)
+parser.add_argument('--mixup', type=int, default=1) #[0, 1]
+
 args = parser.parse_args()
 
 if args.gpu and torch.cuda.is_available():
@@ -105,6 +154,18 @@ def graph_labeling(G):
             old_strings = new_strings
     return G
 
+def train_val_dataset(dataset, val_split=0.25,test_split=0.25):
+    train_val_idx, test_idx = train_test_split(list(range(len(dataset))), test_size=test_split)
+    
+    train_idx, val_idx = train_test_split(train_val_idx, test_size=val_split)
+  
+    
+    # datasets = {}
+    # datasets['train'] = Subset(dataset, train_idx)
+    # datasets['val'] = Subset(dataset, val_idx)
+    # datasets['test'] = Subset(dataset, test_idx)
+    
+    return  train_idx, val_idx ,test_idx
 def preprocess_graph(adj):
     adj_ = adj + np.eye(adj.shape[0])
     rowsum = np.array(adj_.sum(1))
@@ -135,23 +196,38 @@ def main():
     cg_dict = ckpt["cg"] # get computation graph
     input_dim = cg_dict["feat"].shape[2] 
     num_classes = cg_dict["pred"].shape[2]
-    print("input dim: ", input_dim, "; num classes: ", num_classes)
+    
+        
+    dataset = BrainDataset(root='abdi-dataset/abdi',
+                           name="ABIDE",
+                           pre_transform=get_transform(args.node_features))
+    
+    y = get_y(dataset)
+    input_dim = dataset[0].x.shape[1]
+    nodes_num = dataset.num_nodes
+    
 
     # Explain Graph prediction
-    classifier = models.GcnEncoderGraph(
-        input_dim=input_dim,
-        hidden_dim=20,
-        embedding_dim=20,
-        label_dim=num_classes,
-        num_layers=3,
-        bn=False,
-        args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
-    ).to(device)
+    # classifier = models.GcnEncoderGraph(
+    #     input_dim=input_dim,
+    #     hidden_dim=20,
+    #     embedding_dim=20,
+    #     label_dim=num_classes,
+    #     num_layers=3,
+    #     bn=False,
+    #     args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
+    # ).to(device)
 
-    # load state_dict (obtained by model.state_dict() when saving checkpoint)
-    classifier.load_state_dict(ckpt["model_state"])
+   # classifier.load_state_dict(ckpt["model_state"], )
+    classifier = build_model(args, device, "gcn",input_dim , nodes_num )
+    print("class",classifier)
+    load_checkpoint(classifier, "ckpt/model_brainGnn.pth" )
     classifier.eval()
-    print("Number of graphs:", cg_dict["adj"].shape[0])
+
+
+    # # load state_dict (obtained by model.state_dict() when saving checkpoint)
+    # classifier.load_state_dict(ckpt["model_state"])
+    # classifier.eval()
     if args.output is None:
         args.output = args.dataset
 
@@ -173,8 +249,10 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = gaeloss
     label_onehot = torch.eye(100, dtype=torch.float)
+
     class GraphSampler(torch.utils.data.Dataset):
-        """ Sample graphs and nodes in graph
+        """
+          Sample graphs and nodes in graph
         """
         def __init__(
             self,
@@ -183,15 +261,15 @@ def main():
             self.graph_idxs = graph_idxs
             self.graph_data = []
             for graph_idx in graph_idxs:
-                adj = cg_dict["adj"][graph_idx].float()
-                label = cg_dict["label"][graph_idx].long()
-                feat = cg_dict["feat"][graph_idx, :].float()
-                G = graph_labeling(nx.from_numpy_array(cg_dict["adj"][graph_idx].numpy()))
+                data = dataset[graph_idx]
+                adj_org = dataset.adj[graph_idx]
+                adj = adj_org.float()
+                label = torch.Tensor(y[graph_idx])
+                feat = data.x.float()
+                G = graph_labeling(nx.from_numpy_array(adj_org.numpy()))
                 graph_label = np.array([G.nodes[node]['string'] for node in G])
                 graph_label_onehot = label_onehot[graph_label]
                 sub_feat = torch.cat((feat, graph_label_onehot), dim=1)
-                print("sub feat shape", sub_feat.shape)
-                adj_label = adj + np.eye(adj.shape[0])
                 adj_label = adj + np.eye(adj.shape[0])
                 n_nodes = adj.shape[0]
                 graph_size = torch.count_nonzero(adj.sum(-1))
@@ -217,25 +295,23 @@ def main():
         def __getitem__(self, idx):
             return self.graph_data[idx]
 
-    train_idxs = np.array(cg_dict['train_idx'])
-    val_idxs = np.array(cg_dict['val_idx'])
-    test_idxs = np.array(cg_dict['test_idx'])
-    train_graphs = GraphSampler(train_idxs)
-
+    train_idx, val_idx, test_idx = train_val_dataset(dataset)
+    train_idx = np.sort(np.array(train_idx))
+    train_graphs = GraphSampler(train_idx)
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
-        batch_size=args.batch_size,
-        shuffle=True,
+        batch_size=args.train_batch_size,
+        shuffle=False,
         num_workers=0,
     )
-    val_graphs = GraphSampler(val_idxs)
+    val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
         val_graphs,
         batch_size=1000,
         shuffle=False,
         num_workers=0,
     )
-    test_graphs = GraphSampler(test_idxs)
+    test_graphs = GraphSampler(test_idx)
     test_dataset = torch.utils.data.DataLoader(
         test_graphs,
         batch_size=1000,
@@ -361,13 +437,12 @@ def main():
             # print("------- Epoch %2d ------" % epoch)
             model.train()
             train_losses = []
-            for batch_idx, data in enumerate(train_dataset):
+            # for data in train_dataset:
+            # for batch_idx, data in enumerate(train_dataset):
+            for idx in train_idx:
+                data = train_graphs.__getitem__(idx)
                 optimizer.zero_grad()
-                print("PRIIIIIIIINTS")
-                print(data['sub_feat'].shape)
-                print(data['sub_adj'].shape)
-                mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-                return
+                mu, logvar = model.encode(data['sub_feat'].unsqueeze(0), data['sub_adj'].unsqueeze(0))
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
                 org_logit = classifier(data['feat'], data['sub_adj'])[0]

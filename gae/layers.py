@@ -27,6 +27,7 @@ class GraphConvolution(Module):
     def forward(self, input, adj):
         input = F.dropout(input, self.dropout, self.training)
         support = self.linear(input)
+        print(adj.shape, support.shape)
         output = torch.bmm(adj, support)
         output = self.act(output)
         return output
