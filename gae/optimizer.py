@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 
 def loss_function(preds, labels, mu, logvar, n_nodes, norm, pos_weight):
+    print("SHAPRESSS te3 LOSS", preds.flatten(1).T.shape, labels.flatten(1).T.shape)
     bce = F.binary_cross_entropy_with_logits(preds.flatten(1).T, labels.flatten(1).T,pos_weight=pos_weight,reduce=False).mean(0)
     cost = norm * bce
 

@@ -20,7 +20,7 @@ Outputs:
     - info['xhat']
     - info['yhat']
 """
-def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None):
+def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None, brain=False):
     eps = 1e-8
     I = 0.0
     q = torch.zeros(params['M'], device=device)
@@ -42,10 +42,13 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
     beta = torch.randn((params['Nalpha'] * params['Nbeta'], adj.shape[-1], params['L']), device=device).mul(beta_std).add_(beta_mu)
     zs = torch.cat([alpha, beta], dim=-1)  
     xhat = act(decoder(zs)) * adj
+
+    print("SHAPE XHAT : ", xhat.shape, alpha.shape, beta.shape)
     if node_idx is None:
         logits = classifier(feat, xhat)[0]
     else:
         logits = classifier(feat, xhat)[0][:,node_idx,:]
+    
     yhat = F.softmax(logits, dim=1).view(params['Nalpha'], params['Nbeta'] ,params['M'])
     p = yhat.mean(1)
     I = torch.sum(torch.mul(p, torch.log(p+eps)), dim=1).mean()

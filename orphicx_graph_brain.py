@@ -24,7 +24,7 @@ import torch_geometric
 from tqdm import tqdm
 import networkx as nx
 import torch.nn.functional as F
-from brainGNN.dataset.brain_dataset import BrainDataset, ind_val_to_dense
+from brainGNN.dataset.brain_dataset import BrainDataset, dense_to_ind_val, ind_val_to_dense
 from brainGNN.get_transform import get_transform
 from brainGNN.models.brainnn import build_model, load_checkpoint
 from brainGNN.utils import get_y
@@ -37,6 +37,8 @@ from torch_geometric.loader import DataLoader
 
 
 import sys
+
+from geo_utils import to_edge_idx
 dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(dir_path, 'gnnexp'))
 
@@ -295,13 +297,16 @@ def main():
         def __getitem__(self, idx):
             return self.graph_data[idx]
 
+    
+    
     train_idx, val_idx, test_idx = train_val_dataset(dataset)
     train_idx = np.sort(np.array(train_idx))
-    train_graphs = GraphSampler(train_idx)
+    train_graphs = GraphSampler(range(len(train_idx)))
+    print("lengths : ", len(train_idx), train_graphs.__len__())
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
         batch_size=args.train_batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=0,
     )
     val_graphs = GraphSampler(val_idx)
@@ -438,14 +443,20 @@ def main():
             model.train()
             train_losses = []
             # for data in train_dataset:
-            # for batch_idx, data in enumerate(train_dataset):
-            for idx in train_idx:
-                data = train_graphs.__getitem__(idx)
+            for batch_idx, data in enumerate(train_dataset, 0):
+            # for i in range(len(train_dataset)):
+                # data = next(iter(train_dataset))
+            # for t_idx in train_idx:
+                # data = train_graphs.__getitem__(t_idx)
+                print("DATAS ________-----_______")
+                print(data.shape)
+                print(data["adj_label"].shapei)
                 optimizer.zero_grad()
+                data["adj_label"] = data["adj_label"].unsqueeze(0)
                 mu, logvar = model.encode(data['sub_feat'].unsqueeze(0), data['sub_adj'].unsqueeze(0))
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
-                org_logit = classifier(data['feat'], data['sub_adj'])[0]
+                org_logit = classifier(dataset[t_idx])
                 org_probs = F.softmax(org_logit, dim=1)
                 if args.coef_lambda:
                     nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
@@ -455,14 +466,19 @@ def main():
                 alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_logit = classifier(data['feat'], masked_alpha_adj)[0]
-                alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
+                alpha_data = dataset[t_idx]
+                alpha_logit = classifier(alpha_data)[0]
+                alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].unsqueeze(0).mean((1,2))
                 if args.coef_causal:
                     causal_loss = []
+                    data["feat"] = data["feat"].unsqueeze(0)
                     NX = min(data['feat'].shape[0], args.NX)
                     NA = min(data['feat'].shape[0], args.NA)
+                    print("Shape of features --------- ")
+                    print(data["feat"].shape)
                     for idx in random.sample(range(0, data['feat'].shape[0]), NX):
-                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
+                        print("IDX in error", idx)
+                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'], data['feat'][0], act=torch.sigmoid, device=device, brain=True)
                         causal_loss += [_causal_loss]
                         for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
                             if args.node_perm:
@@ -471,7 +487,7 @@ def main():
                                 perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
                             else:
                                 perm_adj = data['sub_adj'][A_idx]
-                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device)
+                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
                             causal_loss += [_causal_loss]
                     causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
                 else:

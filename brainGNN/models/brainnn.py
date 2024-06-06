@@ -4,6 +4,7 @@ import numpy as np
 from itertools import permutations
 from torch_geometric.utils import to_dense_adj
 from torch.nn import functional as F
+from brainGNN.dataset.brain_dataset import dense_to_ind_val
 from brainGNN.models.gcn import GCN
 from brainGNN.models.mlp import MLP
 from brainGNN.models.gat import GAT
@@ -16,8 +17,13 @@ class BrainNN(torch.nn.Module):
         self.pooling = args.pooling
         self.discriminator = discriminator
 
-    def forward(self, data):
-        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+    def forward(self, data, adj=None):
+        if(adj != None):
+            x = data
+            edge_index, edge_attr = dense_to_ind_val(adj)
+            batch = None
+        else:
+            x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
         g = self.gnn(x, edge_index, edge_attr, batch)
         log_logits = F.log_softmax(g, dim=-1)
         

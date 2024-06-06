@@ -221,27 +221,34 @@ def main():
     val_idxs = np.array(cg_dict['val_idx'])
     test_idxs = np.array(cg_dict['test_idx'])
     train_graphs = GraphSampler(train_idxs)
-
+    print("traiiiiin",train_idxs)
+    def custom_collate_fn(batch):
+        for item in batch:
+            print('len of item', len(item))
+        max_length = max(len(item) for item in batch)
+        padded_batch = [torch.cat([item, torch.zeros(max_length - len(item))]) if len(item) < max_length else item for item in batch]
+        return torch.stack(padded_batch, dim=0)
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
-        batch_size=args.batch_size,
+        batch_size=1,
         shuffle=True,
         num_workers=0,
+        collate_fn=custom_collate_fn
     )
-    val_graphs = GraphSampler(val_idxs)
-    val_dataset = torch.utils.data.DataLoader(
-        val_graphs,
-        batch_size=1000,
-        shuffle=False,
-        num_workers=0,
-    )
-    test_graphs = GraphSampler(test_idxs)
-    test_dataset = torch.utils.data.DataLoader(
-        test_graphs,
-        batch_size=1000,
-        shuffle=False,
-        num_workers=0,
-    )
+    # val_graphs = GraphSampler(val_idxs)
+    # val_dataset = torch.utils.data.DataLoader(
+    #     val_graphs,
+    #     batch_size=1000,
+    #     shuffle=False,
+    #     num_workers=0,
+    # )
+    # test_graphs = GraphSampler(test_idxs)
+    # test_dataset = torch.utils.data.DataLoader(
+    #     test_graphs,
+    #     batch_size=1000,
+    #     shuffle=False,
+    #     num_workers=0,
+    # )
 
     def eval_model(dataset, prefix=''):
         model.eval()
@@ -367,9 +374,9 @@ def main():
                 print(data['sub_feat'].shape)
                 print(data['sub_adj'].shape)
                 mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-                return
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
+                print("data sub adj : ",data['sub_adj'].shape)
                 org_logit = classifier(data['feat'], data['sub_adj'])[0]
                 org_probs = F.softmax(org_logit, dim=1)
                 if args.coef_lambda:
@@ -386,6 +393,8 @@ def main():
                     causal_loss = []
                     NX = min(data['feat'].shape[0], args.NX)
                     NA = min(data['feat'].shape[0], args.NA)
+                    print("Feature shape ----: ")
+                    print(data["feat"].shape)
                     for idx in random.sample(range(0, data['feat'].shape[0]), NX):
                         _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
                         causal_loss += [_causal_loss]
