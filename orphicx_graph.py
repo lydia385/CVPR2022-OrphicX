@@ -61,8 +61,8 @@ parser.add_argument('--coef_causal', type=float, default=1.0, help='Coefficient 
 parser.add_argument('--coef_size', type=float, default=0.0, help='Coefficient of size loss.')
 parser.add_argument('--NX', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
 parser.add_argument('--NA', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nalpha', type=int, default=25, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nbeta', type=int, default=100, help='Number of monte-carlo samples per noncausal factor.')
+parser.add_argument('--Nalpha', type=int, default=5, help='Number of monte-carlo samples per causal factor.')
+parser.add_argument('--Nbeta', type=int, default=1, help='Number of monte-carlo samples per noncausal factor.')
 parser.add_argument('--node_perm', action="store_true", help='Use node permutation as data augmentation for causal training.')
 parser.add_argument('--load_ckpt', default=None, help='Load parameters from checkpoint.')
 parser.add_argument('--gpu', action='store_true')
@@ -151,7 +151,6 @@ def main():
     # load state_dict (obtained by model.state_dict() when saving checkpoint)
     classifier.load_state_dict(ckpt["model_state"])
     classifier.eval()
-    print("Number of graphs:", cg_dict["adj"].shape[0])
     if args.output is None:
         args.output = args.dataset
 
@@ -220,7 +219,6 @@ def main():
     val_idxs = np.array(cg_dict['val_idx'])
     test_idxs = np.array(cg_dict['test_idx'])
     train_graphs = GraphSampler(train_idxs)
-    print("traiiiiin",train_idxs)
    
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
@@ -386,8 +384,7 @@ def main():
                     causal_loss = []
                     NX = min(data['feat'].shape[0], args.NX)
                     NA = min(data['feat'].shape[0], args.NA)
-                    print("Feature shape ----: ")
-                    print(data["feat"].shape)
+            
                     for idx in random.sample(range(0, data['feat'].shape[0]), NX):
                         _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
                         causal_loss += [_causal_loss]

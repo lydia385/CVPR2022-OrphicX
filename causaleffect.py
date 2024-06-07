@@ -47,8 +47,8 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
     zs = torch.cat([alpha, beta], dim=-1)  
     xhat = act(decoder(zs)) * adj
     if brain:
-        logits=np.array()
-
+        logits=[]
+        
         for i in range(xhat.shape[0]):
             x_hat_i=xhat[i]
             if node_idx is None:
@@ -56,13 +56,16 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
                 # print(f" index : {i} ")
             else:
                 logits_i = classifier(feat, x_hat_i)[0][:,node_idx,:]
-            logits = np.append(logits,logits_i, axis=0)
+            print(logits_i[0].item())
+            
+            logits.append(logits_i[0].item())
+            # logits=np.array(logits)
     else:
         if node_idx is None:
             logits = classifier(feat_new, xhat)[0]
         else:
             logits = classifier(feat_new, xhat)[0][:,node_idx,:]
-    print(logits.shape)
+    print(logits)
     yhat = F.softmax(logits, dim=1).view(params['Nalpha'], params['Nbeta'] ,params['M'])
     p = yhat.mean(1)
     I = torch.sum(torch.mul(p, torch.log(p+eps)), dim=1).mean()
