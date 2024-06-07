@@ -49,6 +49,5 @@ def load_checkpoint(model, load_path):
     
     model.load_state_dict(checkpoint['model_state_dict'])
     epoch = checkpoint['epoch'],
-    print(f"model has trained for {epoch} of epochs")
 
     return model, epoch

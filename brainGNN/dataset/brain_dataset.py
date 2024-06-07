@@ -86,7 +86,6 @@ class BrainDataset(InMemoryDataset):
         pass
 
     def process(self):
-        print("INSIDE")
         if self.name in ['ABCD', 'PNC', 'ABIDE']:
             if self.name == 'ABCD':
                 adj, y = load_data_abcd(self.raw_dir)

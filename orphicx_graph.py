@@ -226,20 +226,20 @@ def main():
         shuffle=True,
         num_workers=0,
     )
-    # val_graphs = GraphSampler(val_idxs)
-    # val_dataset = torch.utils.data.DataLoader(
-    #     val_graphs,
-    #     batch_size=1000,
-    #     shuffle=False,
-    #     num_workers=0,
-    # )
-    # test_graphs = GraphSampler(test_idxs)
-    # test_dataset = torch.utils.data.DataLoader(
-    #     test_graphs,
-    #     batch_size=1000,
-    #     shuffle=False,
-    #     num_workers=0,
-    # )
+    val_graphs = GraphSampler(val_idxs)
+    val_dataset = torch.utils.data.DataLoader(
+        val_graphs,
+        batch_size=1000,
+        shuffle=False,
+        num_workers=0,
+    )
+    test_graphs = GraphSampler(test_idxs)
+    test_dataset = torch.utils.data.DataLoader(
+        test_graphs,
+        batch_size=1000,
+        shuffle=False,
+        num_workers=0,
+    )
 
     def eval_model(dataset, prefix=''):
         model.eval()
@@ -250,7 +250,7 @@ def main():
                 recovered_adj = torch.sigmoid(recovered)
                 nll_loss =  criterion(recovered, mu, logvar, data).mean()
                 org_adjs = data['sub_adj']
-                org_logits = classifier(data['feat'], data['sub_adj'])[0]
+                org_logits = classifier(data['feat'], data['sub_iadj'])[0]
                 org_probs = F.softmax(org_logits, dim=1)
                 org_log_probs = F.log_softmax(org_logits, dim=1)
                 masked_recovered_adj = recovered_adj * data['sub_adj']
@@ -361,13 +361,9 @@ def main():
             train_losses = []
             for batch_idx, data in enumerate(train_dataset):
                 optimizer.zero_grad()
-                print("PRIIIIIIIINTS")
-                print(data['sub_feat'].shape)
-                print(data['sub_adj'].shape)
                 mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
-                print("data sub adj : ",data['sub_adj'].shape)
                 org_logit = classifier(data['feat'], data['sub_adj'])[0]
                 org_probs = F.softmax(org_logit, dim=1)
                 if args.coef_lambda:
@@ -401,6 +397,7 @@ def main():
                 else:
                     causal_loss = 0
                 if args.coef_kl:
+
                     klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit,dim=1), org_probs, reduction='mean')
                 else:
                     klloss = 0
@@ -467,6 +464,8 @@ def main():
                 topk_alpha_adj = (flatten_alpha_adj > threshold).float().view(data['sub_adj'].shape)
                 alpha_logits = classifier(data['feat'], topk_alpha_adj)[0]
                 alpha_log_probs = F.log_softmax(alpha_logits, dim=1)
+
+
                 results += [{
                     "sparsity": sparsity,
                     "alpha_topk": topk_alpha_adj.sum((1,2)).mean().item()/2,

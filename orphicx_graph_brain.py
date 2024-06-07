@@ -285,7 +285,6 @@ def main():
             return self.graph_data[idx]
 
     
-    print("dataset : ", dataset[0].edge_attrs) 
     
     
     train_idx, val_idx, test_idx = train_val_dataset(dataset)
@@ -301,14 +300,14 @@ def main():
     val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
         val_graphs,
-        batch_size=1000,
+        batch_size=1,
         shuffle=False,
         num_workers=0,
     )
     test_graphs = GraphSampler(test_idx)
     test_dataset = torch.utils.data.DataLoader(
         test_graphs,
-        batch_size=1000,
+        batch_size=1,
         shuffle=False,
         num_workers=0,
     )
@@ -317,34 +316,35 @@ def main():
         model.eval()
         with torch.no_grad():
             for data in dataset:
-                labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+                # labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+                labels = data["sub_label"]
                 recovered, mu, logvar = model(data['sub_feat'], data['sub_adj'])
                 recovered_adj = torch.sigmoid(recovered)
                 nll_loss =  criterion(recovered, mu, logvar, data).mean()
                 org_adjs = data['sub_adj']
-                org_logits = classifier(data['feat'], data['sub_adj'])[0]
-                org_probs = F.softmax(org_logits, dim=1)
-                org_log_probs = F.log_softmax(org_logits, dim=1)
+                org_logits = classifier(data)[0]
+                org_probs = F.softmax(org_logits.unsqueeze(0), dim=1)
+                org_log_probs = F.log_softmax(org_logits.unsqueeze(0), dim=1)
                 masked_recovered_adj = recovered_adj * data['sub_adj']
-                recovered_logits = classifier(data['feat'], masked_recovered_adj)[0]
-                recovered_probs = F.softmax(recovered_logits, dim=1)
-                recovered_log_probs = F.log_softmax(recovered_logits, dim=1)
+                recovered_logits = classifier(data['feat'], masked_recovered_adj.squeeze(0))[0]
+                recovered_probs = F.softmax(recovered_logits.unsqueeze(0), dim=1)
+                recovered_log_probs = F.log_softmax(recovered_logits.unsqueeze(0), dim=1)
                 alpha_mu = torch.zeros_like(mu)
                 alpha_mu[:,:,:args.K] = mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_logits = classifier(data['feat'], masked_alpha_adj)[0]
+                alpha_logits = classifier(data['feat'], masked_alpha_adj.squeeze(0))[0]
                 beta_mu = torch.zeros_like(mu)
                 beta_mu[:,:,args.K:] = mu[:,:,args.K:]
                 beta_adj = torch.sigmoid(model.dc(beta_mu))
                 masked_beta_adj = beta_adj * data['sub_adj']
-                beta_logits = classifier(data['feat'], masked_beta_adj)[0]
+                beta_logits = classifier(data['feat'], masked_beta_adj.squeeze(0))[0]
                 causal_loss = []
                 beta_info = []
                 
                 for idx in random.sample(range(0, data['feat'].shape[0]), args.NX):                 
-                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
-                    _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
+                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
+                    _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
                     causal_loss += [_causal_loss]
                     beta_info += [_beta_info]
                     for A_idx in random.sample(range(0, data['feat'].shape[0]), args.NA-1):
@@ -354,22 +354,22 @@ def main():
                             perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
                         else:
                             perm_adj = data['sub_adj'][A_idx]
-                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device)
-                        _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device)
+                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device,brain=True)
+                        _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device,brain=True)
                         causal_loss += [_causal_loss]
                         beta_info += [_beta_info]
                 causal_loss = torch.stack(causal_loss).mean()
                 alpha_info = causal_loss
                 beta_info = torch.stack(beta_info).mean()
-                klloss = F.kl_div(F.log_softmax(alpha_logits, dim=1), org_probs, reduction='mean')
+                klloss = F.kl_div(F.log_softmax(alpha_logits.unsqueeze(0), dim=1), org_probs, reduction='mean')
             pred_labels = torch.argmax(org_probs,axis=1)
             org_acc = (torch.argmax(org_probs,axis=1) == torch.argmax(recovered_probs,axis=1)).float().mean()
             pred_acc = (torch.argmax(recovered_probs,axis=1) == labels).float().mean()
             kl_pred_org = F.kl_div(recovered_log_probs, org_probs, reduction='mean')
-            alpha_probs = F.softmax(alpha_logits, dim=1)
-            alpha_log_probs = F.log_softmax(alpha_logits, dim=1)
-            beta_probs = F.softmax(beta_logits, dim=1)
-            beta_log_probs = F.log_softmax(beta_logits, dim=1)
+            alpha_probs = F.softmax(alpha_logits.unsqueeze(0), dim=1)
+            alpha_log_probs = F.log_softmax(alpha_logits.unsqueeze(0), dim=1)
+            beta_probs = F.softmax(beta_logits.unsqueeze(0), dim=1)
+            beta_log_probs = F.log_softmax(beta_logits.unsqueeze(0), dim=1)
             alpha_gt_acc = (torch.argmax(alpha_probs,axis=1) == labels).float().mean()
             alpha_pred_acc = (torch.argmax(alpha_probs,axis=1) == pred_labels).float().mean()
             alpha_kld = F.kl_div(alpha_log_probs, org_probs, reduction='mean')
@@ -428,90 +428,87 @@ def main():
         writer = SummaryWriter(comment=args.output)
         os.makedirs('explanation/%s' % args.output, exist_ok=True)
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
-            # print("------- Epoch %2d ------" % epoch)
             model.train()
-            train_losses = []
-            # for data in train_dataset:
-            for batch_idx, data in enumerate(train_dataset):
-                print(data["adj_label"].shape)
-                optimizer.zero_grad()
-                mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-                sample_mu = model.reparameterize(mu, logvar)
-                recovered = model.dc(sample_mu)
-                org_logit = classifier(data)
-                org_probs = F.softmax(org_logit, dim=1)
-                if args.coef_lambda:
-                    nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
-                else:
-                    nll_loss = 0
-                alpha_mu = torch.zeros_like(sample_mu)
-                alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
-                alpha_adj = torch.sigmoid(model.dc(alpha_mu))
-                masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_logit = classifier(data)[0]
-                alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
-                if args.coef_causal:
-                    causal_loss = []
-                    data["feat"] = data["feat"]
-                    NX = min(data['feat'].shape[0], args.NX)
-                    NA = min(data['feat'].shape[0], args.NA)
-                    for idx in random.sample(range(0, data['feat'].shape[0]), NX):
-                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
-                        print("Finished")
-                        causal_loss += [_causal_loss]
-                        for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
-                            if args.node_perm:
-                                perm = torch.randperm(data['graph_size'][idx])
-                                perm_adj = data['sub_adj'][idx].clone().detach()
-                                perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
-                            else:
-                                perm_adj = data['sub_adj'][A_idx]
-                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
-                            causal_loss += [_causal_loss]
-                    causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
-                else:
-                    causal_loss = 0
-                if args.coef_kl:
-                    klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit,dim=1), org_probs, reduction='mean')
-                else:
-                    klloss = 0
-                if args.coef_size:
-                    size_loss = args.coef_size * alpha_sparsity.mean()
-                else:
-                    size_loss = 0
+            # train_losses = []
+            # # for data in train_dataset:
+            # for batch_idx, data in enumerate(train_dataset):
+            #     optimizer.zero_grad()
+            #     mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
+            #     sample_mu = model.reparameterize(mu, logvar)
+            #     recovered = model.dc(sample_mu)
+            #     org_logit = classifier(data)
+            #     org_probs = F.softmax(org_logit, dim=1)
+            #     if args.coef_lambda:
+            #         nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
+            #     else:
+            #         nll_loss = 0
+            #     alpha_mu = torch.zeros_like(sample_mu)
+            #     alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
+            #     alpha_adj = torch.sigmoid(model.dc(alpha_mu))
+            #     masked_alpha_adj = alpha_adj * data['sub_adj']
+            #     alpha_logit = classifier(data)[0]
+            #     alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
+            #     if args.coef_causal:
+            #         causal_loss = []
+            #         data["feat"] = data["feat"]
+            #         NX = min(data['feat'].shape[0], args.NX)
+            #         NA = min(data['feat'].shape[0], args.NA)
+            #         for idx in random.sample(range(0, data['feat'].shape[0]), NX):
+            #             _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
+            #             causal_loss += [_causal_loss]
+            #             for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
+            #                 if args.node_perm:
+            #                     perm = torch.randperm(data['graph_size'][idx])
+            #                     perm_adj = data['sub_adj'][idx].clone().detach()
+            #                     perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
+            #                 else:
+            #                     perm_adj = data['sub_adj'][A_idx]
+            #                 _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
+            #                 causal_loss += [_causal_loss]
+            #         causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
+            #     else:
+            #         causal_loss = 0
+            #     if args.coef_kl:
+            #         klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit.unsqueeze(0),dim=1), org_probs, reduction='mean')
+            #     else:
+            #         klloss = 0
+            #     if args.coef_size:
+            #         size_loss = args.coef_size * alpha_sparsity.mean()
+            #     else:
+            #         size_loss = 0
 
-                loss = nll_loss + causal_loss + klloss + size_loss
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.step()
-                train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
-                sys.stdout.flush()
+            #     loss = nll_loss + causal_loss + klloss + size_loss
+            #     loss.backward()
+            #     nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            #     optimizer.step()
+            #     train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
+            #     sys.stdout.flush()
             
             # train_loss = (torch.cat(train_losses)).mean().item()
-            nll_loss, causal_loss, klloss, size_loss = torch.tensor(train_losses).mean(0)
-            writer.add_scalar("train/nll", nll_loss, epoch)
-            writer.add_scalar("train/causal", causal_loss, epoch)
-            writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
-            writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
-            writer.add_scalar("train/total_loss", nll_loss + causal_loss + klloss + size_loss, epoch)
+            # nll_loss, causal_loss, klloss, size_loss = torch.tensor(train_losses).mean(0)
+            # writer.add_scalar("train/nll", nll_loss, epoch)
+            # writer.add_scalar("train/causal", causal_loss, epoch)
+            # writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
+            # writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
+            # writer.add_scalar("train/total_loss", nll_loss + causal_loss + klloss + size_loss, epoch)
 
-            val_loss = eval_model(val_dataset, 'val')
-            patient -= 1
-            if val_loss < best_loss:
-                best_loss = val_loss
-                save_checkpoint('explanation/%s/model.ckpt' % args.output)
-                test_loss = eval_model(test_dataset, 'test')
-                patient = 100
-            elif patient <= 0:
-                print("Early stopping!")
-                break
-            if epoch % 100 == 0:
-                save_checkpoint('explanation/%s/model-%depoch.ckpt' % (args.output,epoch))
-        print("Train time:", time.time() - start_time)
-        writer.close()
-        checkpoint = torch.load('explanation/%s/model.ckpt' % args.output)
-        model.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
+            # val_loss = eval_model(val_dataset, 'val')
+            # patient -= 1
+            # if val_loss < best_loss:
+            #     best_loss = val_loss
+            #     save_checkpoint('explanation/%s/model.ckpt' % args.output)
+            #     test_loss = eval_model(test_dataset, 'test')
+            #     patient = 100
+            # elif patient <= 0:
+            #     print("Early stopping!")
+            #     break
+
+        # save_checkpoint('explanation/%s/model-%depoch.ckpt' % (args.output,epoch))
+        # print("Train time:", time.time() - start_time)
+        # writer.close()
+        # checkpoint = torch.load('explanation/%s/model.ckpt' % args.output)
+        # model.load_state_dict(checkpoint['model'])
+        # optimizer.load_state_dict(checkpoint['optimizer'])
 
     print("Start evaluation.")
 
@@ -519,11 +516,12 @@ def main():
     results = []
     with torch.no_grad():
         for data in test_dataset:
-            print("data : ", data)
-            labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+            # labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+
+            labels = data["sub_label"]
             mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-            org_logits = classifier(data['feat'], data['sub_adj'])[0]
-            org_probs = F.softmax(org_logits, dim=1)
+            org_logits = classifier(data)[0]
+            org_probs = F.softmax(org_logits.unsqueeze(0), dim=1)
             pred_labels = torch.argmax(org_probs,axis=1)
             alpha_mu = torch.zeros_like(mu)
             std = torch.exp(logvar)
@@ -537,14 +535,14 @@ def main():
                 threshold = torch.gather(flatten_alpha_adj.sort(1,descending=True).values, 1, topk)
                 threshold = torch.maximum(threshold, torch.ones_like(threshold)*1E-6)
                 topk_alpha_adj = (flatten_alpha_adj > threshold).float().view(data['sub_adj'].shape)
-                alpha_logits = classifier(data['feat'], topk_alpha_adj)[0]
-                alpha_log_probs = F.log_softmax(alpha_logits, dim=1)
+                alpha_logits = classifier(data['feat'], topk_alpha_adj.squeeze(0))[0]
+                alpha_log_probs = F.log_softmax(alpha_logits.unsqueeze(0), dim=1)
                 results += [{
                     "sparsity": sparsity,
                     "alpha_topk": topk_alpha_adj.sum((1,2)).mean().item()/2,
                     "alpha_sparsity": (topk_alpha_adj.sum((1,2))/data['sub_adj'].sum((1,2))).mean().item(),
-                    "alpha_gt_acc": (torch.argmax(alpha_logits,axis=1) == labels).float().mean().item(),
-                    "alpha_pred_acc": (torch.argmax(alpha_logits,axis=1) == pred_labels).float().mean().item(),
+                    "alpha_gt_acc": (torch.argmax(alpha_logits.unsqueeze(0),axis=1) == labels).float().mean().item(),
+                    "alpha_pred_acc": (torch.argmax(alpha_logits.unsqueeze(0),axis=1) == pred_labels).float().mean().item(),
                     "alpha_kld": F.kl_div(alpha_log_probs, org_probs, reduction='batchmean').item()
                 }]
     columns = results[0].keys()
@@ -557,10 +555,10 @@ def main():
         with torch.no_grad():
             infos = [
                 [
-                    - causaleffect.joint_uncond_singledim(
+                    - causaleffect.x(
                         ceparams, model.dc, classifier, 
                         data['sub_adj'][idx], data['feat'][idx], 
-                        dim, act=torch.sigmoid, device=device
+                        dim, act=torch.sigmoid, device=device,brain=True,
                     )[0] for dim in range(ceparams['z_dim'])
                 ] for idx in tqdm(range(data['feat'].shape[0]))
             ]

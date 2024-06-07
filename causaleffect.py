@@ -46,26 +46,25 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
     beta = torch.randn((params['Nalpha'] * params['Nbeta'], adj.shape[-1], params['L']), device=device).mul(beta_std).add_(beta_mu)
     zs = torch.cat([alpha, beta], dim=-1)  
     xhat = act(decoder(zs)) * adj
-    if brain:
+    if  brain:
         logits=[]
         
         for i in range(xhat.shape[0]):
             x_hat_i=xhat[i]
             if node_idx is None:
                 logits_i = classifier(feat, x_hat_i)[0]
-                # print(f" index : {i} ")
+
             else:
                 logits_i = classifier(feat, x_hat_i)[0][:,node_idx,:]
-            print(logits_i[0].item())
-            
-            logits.append(logits_i[0].item())
-            # logits=np.array(logits)
+            logits.append([logits_i[0].item(),logits_i[1].item()])
+            # return
+        logits = torch.as_tensor(logits)
+        
     else:
         if node_idx is None:
             logits = classifier(feat_new, xhat)[0]
         else:
             logits = classifier(feat_new, xhat)[0][:,node_idx,:]
-    print(logits)
     yhat = F.softmax(logits, dim=1).view(params['Nalpha'], params['Nbeta'] ,params['M'])
     p = yhat.mean(1)
     I = torch.sum(torch.mul(p, torch.log(p+eps)), dim=1).mean()
@@ -74,11 +73,11 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
     return -I, None
 
 
-def beta_info_flow(params, decoder, classifier, adj, feat, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None):
+def beta_info_flow(params, decoder, classifier, adj, feat, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None, brain=False):
     eps = 1e-8
     I = 0.0
     q = torch.zeros(params['M'], device=device)
-    feat = feat.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
+    feat_new = feat.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     adj = adj.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     if torch.is_tensor(mu):
         alpha_mu = mu[:,:params['K']]
@@ -96,10 +95,25 @@ def beta_info_flow(params, decoder, classifier, adj, feat, node_idx=None, act=to
     beta = torch.randn((params['Nalpha'], adj.shape[-1], params['L']), device=device).mul(beta_std).add_(beta_mu).repeat(1,params['Nbeta'],1).view(params['Nalpha'] * params['Nbeta'] , adj.shape[-1], params['L'])
     zs = torch.cat([alpha, beta], dim=-1)
     xhat = act(decoder(zs)) * adj
-    if node_idx is None:
-        logits = classifier(feat, xhat)[0]
+    if  brain:
+        logits=[]
+        
+        for i in range(xhat.shape[0]):
+            x_hat_i=xhat[i]
+            if node_idx is None:
+                logits_i = classifier(feat, x_hat_i)[0]
+
+            else:
+                logits_i = classifier(feat, x_hat_i)[0][:,node_idx,:]
+            logits.append([logits_i[0].item(),logits_i[1].item()])
+            # return
+        logits = torch.as_tensor(logits)
+        
     else:
-        logits = classifier(feat, xhat)[0][:,node_idx,:]
+        if node_idx is None:
+            logits = classifier(feat_new, xhat)[0]
+        else:
+            logits = classifier(feat_new, xhat)[0][:,node_idx,:]
     yhat = F.softmax(logits, dim=1).view(params['Nalpha'], params['Nbeta'] ,params['M'])
     p = yhat.mean(1)
     I = torch.sum(torch.mul(p, torch.log(p+eps)), dim=1).mean()
@@ -151,11 +165,11 @@ Outputs:
     - info['xhat']
     - info['yhat']
 """
-def joint_uncond_singledim(params, decoder, classifier, adj, feat, dim, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None):
+def joint_uncond_singledim(params, decoder, classifier, adj, feat, dim, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None,brain=False):
     eps = 1e-8
     I = 0.0
     q = torch.zeros(params['M'], device=device)
-    feat = feat.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
+    feat_new = feat.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     adj = adj.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     if torch.is_tensor(mu):
         alpha_mu = mu
@@ -173,10 +187,25 @@ def joint_uncond_singledim(params, decoder, classifier, adj, feat, dim, node_idx
     zs = torch.randn((params['Nalpha'] * params['Nbeta'], adj.shape[-1], params['z_dim']), device=device).mul(beta_std).add_(beta_mu)
     zs[:,:,dim] = alpha
     xhat = act(decoder(zs)) * adj
-    if node_idx is None:
-        logits = classifier(feat, xhat)[0]
+    if  brain:
+        logits=[]
+        
+        for i in range(xhat.shape[0]):
+            x_hat_i=xhat[i]
+            if node_idx is None:
+                logits_i = classifier(feat, x_hat_i)[0]
+
+            else:
+                logits_i = classifier(feat, x_hat_i)[0][:,node_idx,:]
+            logits.append([logits_i[0].item(),logits_i[1].item()])
+            # return
+        logits = torch.as_tensor(logits)
+        
     else:
-        logits = classifier(feat, xhat)[0][:,node_idx,:]
+        if node_idx is None:
+            logits = classifier(feat_new, xhat)[0]
+        else:
+            logits = classifier(feat_new, xhat)[0][:,node_idx,:]
     yhat = F.softmax(logits, dim=1).view(params['Nalpha'], params['Nbeta'] ,params['M'])
     p = yhat.mean(1)
     I = torch.sum(torch.mul(p, torch.log(p+eps)), dim=1).mean()
