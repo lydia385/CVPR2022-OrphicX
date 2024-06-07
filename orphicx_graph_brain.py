@@ -429,86 +429,87 @@ def main():
         os.makedirs('explanation/%s' % args.output, exist_ok=True)
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
             model.train()
-            # train_losses = []
-            # # for data in train_dataset:
-            # for batch_idx, data in enumerate(train_dataset):
-            #     optimizer.zero_grad()
-            #     mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-            #     sample_mu = model.reparameterize(mu, logvar)
-            #     recovered = model.dc(sample_mu)
-            #     org_logit = classifier(data)
-            #     org_probs = F.softmax(org_logit, dim=1)
-            #     if args.coef_lambda:
-            #         nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
-            #     else:
-            #         nll_loss = 0
-            #     alpha_mu = torch.zeros_like(sample_mu)
-            #     alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
-            #     alpha_adj = torch.sigmoid(model.dc(alpha_mu))
-            #     masked_alpha_adj = alpha_adj * data['sub_adj']
-            #     alpha_logit = classifier(data)[0]
-            #     alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
-            #     if args.coef_causal:
-            #         causal_loss = []
-            #         data["feat"] = data["feat"]
-            #         NX = min(data['feat'].shape[0], args.NX)
-            #         NA = min(data['feat'].shape[0], args.NA)
-            #         for idx in random.sample(range(0, data['feat'].shape[0]), NX):
-            #             _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
-            #             causal_loss += [_causal_loss]
-            #             for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
-            #                 if args.node_perm:
-            #                     perm = torch.randperm(data['graph_size'][idx])
-            #                     perm_adj = data['sub_adj'][idx].clone().detach()
-            #                     perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
-            #                 else:
-            #                     perm_adj = data['sub_adj'][A_idx]
-            #                 _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
-            #                 causal_loss += [_causal_loss]
-            #         causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
-            #     else:
-            #         causal_loss = 0
-            #     if args.coef_kl:
-            #         klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit.unsqueeze(0),dim=1), org_probs, reduction='mean')
-            #     else:
-            #         klloss = 0
-            #     if args.coef_size:
-            #         size_loss = args.coef_size * alpha_sparsity.mean()
-            #     else:
-            #         size_loss = 0
+            train_losses = []
+            # for data in train_dataset:
+            for batch_idx, data in enumerate(train_dataset):
+                optimizer.zero_grad()
+                mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
+                sample_mu = model.reparameterize(mu, logvar)
+                recovered = model.dc(sample_mu)
+                org_logit = classifier(data)
+                org_probs = F.softmax(org_logit, dim=1)
+                if args.coef_lambda:
+                    nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
+                else:
+                    nll_loss = 0
+                alpha_mu = torch.zeros_like(sample_mu)
+                alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
+                alpha_adj = torch.sigmoid(model.dc(alpha_mu))
+                masked_alpha_adj = alpha_adj * data['sub_adj']
+                alpha_logit = classifier(data)[0]
+                alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
+                if args.coef_causal:
+                    causal_loss = []
+                    data["feat"] = data["feat"]
+                    NX = min(data['feat'].shape[0], args.NX)
+                    NA = min(data['feat'].shape[0], args.NA)
+                    for idx in random.sample(range(0, data['feat'].shape[0]), NX):
+                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
+                        causal_loss += [_causal_loss]
+                        for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
+                            if args.node_perm:
+                                perm = torch.randperm(data['graph_size'][idx])
+                                perm_adj = data['sub_adj'][idx].clone().detach()
+                                perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
+                            else:
+                                perm_adj = data['sub_adj'][A_idx]
+                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
+                            causal_loss += [_causal_loss]
+                    causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
+                else:
+                    causal_loss = 0
+                if args.coef_kl:
+                    klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit.unsqueeze(0),dim=1), org_probs, reduction='mean')
+                else:
+                    klloss = 0
+                if args.coef_size:
+                    size_loss = args.coef_size * alpha_sparsity.mean()
+                else:
+                    size_loss = 0
 
-            #     loss = nll_loss + causal_loss + klloss + size_loss
-            #     loss.backward()
-            #     nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-            #     optimizer.step()
-            #     train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
-            #     sys.stdout.flush()
+                loss = nll_loss + causal_loss + klloss + size_loss
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                optimizer.step()
+                train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
+                sys.stdout.flush()
             
-            # train_loss = (torch.cat(train_losses)).mean().item()
-            # nll_loss, causal_loss, klloss, size_loss = torch.tensor(train_losses).mean(0)
-            # writer.add_scalar("train/nll", nll_loss, epoch)
-            # writer.add_scalar("train/causal", causal_loss, epoch)
-            # writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
-            # writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
-            # writer.add_scalar("train/total_loss", nll_loss + causal_loss + klloss + size_loss, epoch)
+            train_loss = (torch.cat(train_losses)).mean().item()
+            nll_loss, causal_loss, klloss, size_loss = torch.tensor(train_losses).mean(0)
+            writer.add_scalar("train/nll", nll_loss, epoch)
+            writer.add_scalar("train/causal", causal_loss, epoch)
+            writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
+            writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
+            writer.add_scalar("train/total_loss", nll_loss + causal_loss + klloss + size_loss, epoch)
 
-            # val_loss = eval_model(val_dataset, 'val')
-            # patient -= 1
-            # if val_loss < best_loss:
-            #     best_loss = val_loss
-            #     save_checkpoint('explanation/%s/model.ckpt' % args.output)
-            #     test_loss = eval_model(test_dataset, 'test')
-            #     patient = 100
-            # elif patient <= 0:
-            #     print("Early stopping!")
-            #     break
-
-        # save_checkpoint('explanation/%s/model-%depoch.ckpt' % (args.output,epoch))
-        # print("Train time:", time.time() - start_time)
-        # writer.close()
-        # checkpoint = torch.load('explanation/%s/model.ckpt' % args.output)
-        # model.load_state_dict(checkpoint['model'])
-        # optimizer.load_state_dict(checkpoint['optimizer'])
+            val_loss = eval_model(val_dataset, 'val')
+            patient -= 1
+            if val_loss < best_loss:
+                best_loss = val_loss
+                save_checkpoint('explanation/brain/model.ckpt' % args.output)
+                test_loss = eval_model(test_dataset, 'test')
+                patient = 100
+            elif patient <= 0:
+                print("Early stopping!")
+                break
+            if epoch % 100 == 0:
+                save_checkpoint('explanation/brain/model-%depoch.ckpt' % (args.output,epoch))
+        save_checkpoint('explanation/brain/model-%depoch.ckpt' % (args.output,epoch))
+        print("Train time:", time.time() - start_time)
+        writer.close()
+        checkpoint = torch.load('explanation/brain/model.ckpt' % args.output)
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
 
     print("Start evaluation.")
 
