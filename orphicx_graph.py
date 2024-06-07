@@ -190,7 +190,6 @@ def main():
                 graph_label = np.array([G.nodes[node]['string'] for node in G])
                 graph_label_onehot = label_onehot[graph_label]
                 sub_feat = torch.cat((feat, graph_label_onehot), dim=1)
-                print("sub feat shape", sub_feat.shape)
                 adj_label = adj + np.eye(adj.shape[0])
                 adj_label = adj + np.eye(adj.shape[0])
                 n_nodes = adj.shape[0]
@@ -222,18 +221,12 @@ def main():
     test_idxs = np.array(cg_dict['test_idx'])
     train_graphs = GraphSampler(train_idxs)
     print("traiiiiin",train_idxs)
-    def custom_collate_fn(batch):
-        for item in batch:
-            print('len of item', len(item))
-        max_length = max(len(item) for item in batch)
-        padded_batch = [torch.cat([item, torch.zeros(max_length - len(item))]) if len(item) < max_length else item for item in batch]
-        return torch.stack(padded_batch, dim=0)
+   
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
-        batch_size=1,
+        batch_size=args.batch_size,
         shuffle=True,
         num_workers=0,
-        collate_fn=custom_collate_fn
     )
     # val_graphs = GraphSampler(val_idxs)
     # val_dataset = torch.utils.data.DataLoader(

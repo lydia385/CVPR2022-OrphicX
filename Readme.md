@@ -19,3 +19,4 @@ python orphicx_graph.py --dataset NCI1 --plot_info_flow
 ### lyax
 
 python orphicx_graph.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --retrain
+python orphicx_graph_brain.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --batch_size 1 --retrain

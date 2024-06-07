@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from brainGNN.dataset.brain_dataset import dense_to_ind_val
+
 
 """
 joint_uncond:
@@ -24,7 +26,9 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
     eps = 1e-8
     I = 0.0
     q = torch.zeros(params['M'], device=device)
-    feat = feat.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
+            # Ensure feat and adj are not repeated since batch size is 1
+
+    feat_new = feat.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     adj = adj.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     if torch.is_tensor(mu):
         alpha_mu = mu[:,:params['K']]
@@ -42,13 +46,23 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
     beta = torch.randn((params['Nalpha'] * params['Nbeta'], adj.shape[-1], params['L']), device=device).mul(beta_std).add_(beta_mu)
     zs = torch.cat([alpha, beta], dim=-1)  
     xhat = act(decoder(zs)) * adj
+    if brain:
+        logits=np.array([])
 
-    print("SHAPE XHAT : ", xhat.shape, alpha.shape, beta.shape)
-    if node_idx is None:
-        logits = classifier(feat, xhat)[0]
+        for i in range(xhat.shape[0]):
+            x_hat_i=xhat[i]
+            if node_idx is None:
+                logits_i = classifier(feat, x_hat_i)[0]
+                # print(f" index : {i} ")
+            else:
+                logits_i = classifier(feat, x_hat_i)[0][:,node_idx,:]
+            logits = np.append(logits,torch.Tensor(logits_i), axis=0)
     else:
-        logits = classifier(feat, xhat)[0][:,node_idx,:]
-    
+        if node_idx is None:
+            logits = classifier(feat_new, xhat)[0]
+        else:
+            logits = classifier(feat_new, xhat)[0][:,node_idx,:]
+    print(logits.shape)
     yhat = F.softmax(logits, dim=1).view(params['Nalpha'], params['Nbeta'] ,params['M'])
     p = yhat.mean(1)
     I = torch.sum(torch.mul(p, torch.log(p+eps)), dim=1).mean()

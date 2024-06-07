@@ -19,11 +19,9 @@ class BrainNN(torch.nn.Module):
 
     def forward(self, data, adj=None):
         if(adj != None):
-            x = data
-            edge_index, edge_attr = dense_to_ind_val(adj)
-            batch = None
+            x, (edge_index, edge_attr), batch = data, dense_to_ind_val(adj), 1
         else:
-            x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+            x, edge_index, edge_attr, batch = data["x"], data["edge_index"], data["edge_attr"], 1
         g = self.gnn(x, edge_index, edge_attr, batch)
         log_logits = F.log_softmax(g, dim=-1)
         

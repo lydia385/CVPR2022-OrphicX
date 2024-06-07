@@ -73,7 +73,7 @@ parser.add_argument('--coef_size', type=float, default=0.0, help='Coefficient of
 parser.add_argument('--NX', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
 parser.add_argument('--NA', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
 parser.add_argument('--Nalpha', type=int, default=25, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nbeta', type=int, default=100, help='Number of monte-carlo samples per noncausal factor.')
+parser.add_argument('--Nbeta', type=int, default=10, help='Number of monte-carlo samples per noncausal factor.')
 parser.add_argument('--node_perm', action="store_true", help='Use node permutation as data augmentation for causal training.')
 parser.add_argument('--load_ckpt', default=None, help='Load parameters from checkpoint.')
 parser.add_argument('--gpu', action='store_true')
@@ -116,7 +116,6 @@ parser.add_argument('--dropout_braingnn', type=float, default=0.5)
 parser.add_argument('--repeat', type=int, default=1)
 parser.add_argument('--k_fold_splits', type=int, default=5)
 parser.add_argument('--test_interval', type=int, default=5)
-parser.add_argument('--train_batch_size', type=int, default=16)
 parser.add_argument('--test_batch_size', type=int, default=16)
 
 parser.add_argument('--diff', type=float, default=0.2)
@@ -209,27 +208,12 @@ def main():
     nodes_num = dataset.num_nodes
     
 
-    # Explain Graph prediction
-    # classifier = models.GcnEncoderGraph(
-    #     input_dim=input_dim,
-    #     hidden_dim=20,
-    #     embedding_dim=20,
-    #     label_dim=num_classes,
-    #     num_layers=3,
-    #     bn=False,
-    #     args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
-    # ).to(device)
 
    # classifier.load_state_dict(ckpt["model_state"], )
     classifier = build_model(args, device, "gcn",input_dim , nodes_num )
-    print("class",classifier)
     load_checkpoint(classifier, "ckpt/model_brainGnn.pth" )
     classifier.eval()
 
-
-    # # load state_dict (obtained by model.state_dict() when saving checkpoint)
-    # classifier.load_state_dict(ckpt["model_state"])
-    # classifier.eval()
     if args.output is None:
         args.output = args.dataset
 
@@ -288,7 +272,10 @@ def main():
                     "adj_label": adj_label.to(device).float(),
                     "n_nodes": torch.Tensor([n_nodes])[0].to(device),
                     "pos_weight": pos_weight.to(device),
-                    "norm": norm.to(device)
+                    "norm": norm.to(device),
+                    "edge_index": dataset[graph_idx].edge_index,
+                    "edge_attr": dataset[graph_idx].edge_attr,
+                    "x": dataset[graph_idx].x,
                 }]
 
         def __len__(self):
@@ -298,16 +285,18 @@ def main():
             return self.graph_data[idx]
 
     
+    print("dataset : ", dataset[0].edge_attrs) 
+    
     
     train_idx, val_idx, test_idx = train_val_dataset(dataset)
     train_idx = np.sort(np.array(train_idx))
     train_graphs = GraphSampler(range(len(train_idx)))
-    print("lengths : ", len(train_idx), train_graphs.__len__())
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
-        batch_size=args.train_batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
         num_workers=0,
+        drop_last=True
     )
     val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
@@ -443,20 +432,13 @@ def main():
             model.train()
             train_losses = []
             # for data in train_dataset:
-            for batch_idx, data in enumerate(train_dataset, 0):
-            # for i in range(len(train_dataset)):
-                # data = next(iter(train_dataset))
-            # for t_idx in train_idx:
-                # data = train_graphs.__getitem__(t_idx)
-                print("DATAS ________-----_______")
-                print(data.shape)
-                print(data["adj_label"].shapei)
+            for batch_idx, data in enumerate(train_dataset):
+                print(data["adj_label"].shape)
                 optimizer.zero_grad()
-                data["adj_label"] = data["adj_label"].unsqueeze(0)
-                mu, logvar = model.encode(data['sub_feat'].unsqueeze(0), data['sub_adj'].unsqueeze(0))
+                mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
-                org_logit = classifier(dataset[t_idx])
+                org_logit = classifier(data)
                 org_probs = F.softmax(org_logit, dim=1)
                 if args.coef_lambda:
                     nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
@@ -466,19 +448,16 @@ def main():
                 alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_data = dataset[t_idx]
-                alpha_logit = classifier(alpha_data)[0]
-                alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].unsqueeze(0).mean((1,2))
+                alpha_logit = classifier(data)[0]
+                alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
                 if args.coef_causal:
                     causal_loss = []
-                    data["feat"] = data["feat"].unsqueeze(0)
+                    data["feat"] = data["feat"]
                     NX = min(data['feat'].shape[0], args.NX)
                     NA = min(data['feat'].shape[0], args.NA)
-                    print("Shape of features --------- ")
-                    print(data["feat"].shape)
                     for idx in random.sample(range(0, data['feat'].shape[0]), NX):
-                        print("IDX in error", idx)
-                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'], data['feat'][0], act=torch.sigmoid, device=device, brain=True)
+                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
+                        print("Finished")
                         causal_loss += [_causal_loss]
                         for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
                             if args.node_perm:
@@ -540,6 +519,7 @@ def main():
     results = []
     with torch.no_grad():
         for data in test_dataset:
+            print("data : ", data)
             labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
             mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
             org_logits = classifier(data['feat'], data['sub_adj'])[0]

@@ -131,12 +131,15 @@ class GCN(torch.nn.Module):
         )
 
     def forward(self, x, edge_index, edge_attr, batch):
-        z = x
+        edge_index = edge_index.squeeze(0)
+        edge_attr = edge_attr.squeeze(0)
+
+        z = x.squeeze(0)
+
         edge_attr = torch.abs(edge_attr)
    
         for i, conv in enumerate(self.convs):
             # bz*nodes, hidden
-            print("------- shapes in GCN: ", edge_attr.shape, edge_index.shape)
             z = conv(z, edge_index, edge_attr)
 
         if self.pooling == "concat":
