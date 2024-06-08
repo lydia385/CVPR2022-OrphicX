@@ -484,7 +484,6 @@ def main():
                 train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
                 sys.stdout.flush()
             
-            train_loss = (torch.cat(train_losses)).mean().item()
             nll_loss, causal_loss, klloss, size_loss = torch.tensor(train_losses).mean(0)
             writer.add_scalar("train/nll", nll_loss, epoch)
             writer.add_scalar("train/causal", causal_loss, epoch)
