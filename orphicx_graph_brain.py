@@ -273,9 +273,9 @@ def main():
                     "n_nodes": torch.Tensor([n_nodes])[0].to(device),
                     "pos_weight": pos_weight.to(device),
                     "norm": norm.to(device),
-                    "edge_index": dataset[graph_idx].edge_index,
-                    "edge_attr": dataset[graph_idx].edge_attr,
-                    "x": dataset[graph_idx].x,
+                    "edge_index": dataset[graph_idx].edge_index.to(device),
+                    "edge_attr": dataset[graph_idx].edge_attr.to(device),
+                    "x": dataset[graph_idx].x.to(device),
                 }]
 
         def __len__(self):
@@ -420,7 +420,7 @@ def main():
     else:
         args.retrain = True
         start_epoch = 1
-        best_loss = 100
+        best_loss = float("inf")
     if args.resume or args.retrain:
         patient = args.patient
         model.train()
@@ -476,7 +476,7 @@ def main():
                     size_loss = args.coef_size * alpha_sparsity.mean()
                 else:
                     size_loss = 0
-
+            
                 loss = nll_loss + causal_loss + klloss + size_loss
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -491,11 +491,12 @@ def main():
             writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
             writer.add_scalar("train/total_loss", nll_loss + causal_loss + klloss + size_loss, epoch)
 
+
             val_loss = eval_model(val_dataset, 'val')
             patient -= 1
             if val_loss < best_loss:
                 best_loss = val_loss
-                save_checkpoint('explanation/brain/model.ckpt' % args.output)
+                save_checkpoint('explanation/brain/model.ckpt')
                 test_loss = eval_model(test_dataset, 'test')
                 patient = 100
             elif patient <= 0:
