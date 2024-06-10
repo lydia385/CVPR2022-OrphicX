@@ -26,10 +26,18 @@ class GraphConvolution(Module):
     
 
     def forward(self, input, adj):
+        input=torch.nn.functional.normalize(input)
         input = F.dropout(input, self.dropout, self.training)
+        print("After dropout:", input.shape)
+
         support = self.linear(input)
+        print("After linear transformation:", support.shape)
+
         output = torch.bmm(adj, support)
+        print("After batch matrix multiplication:", output)
+
         output = self.act(output)
+        print("After activation:", output)
         return output
 
     def __repr__(self):

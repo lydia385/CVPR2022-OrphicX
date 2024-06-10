@@ -54,7 +54,7 @@ color_map = ['gray', 'blue', 'purple', 'red', 'brown', 'green', 'orange', 'olive
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='Mutagenicity', help='Name of dataset.')
 parser.add_argument('--output', type=str, default=None, help='output path.')
-parser.add_argument('--lr', type=float, default=0.001, help='Initial learning rate.')
+parser.add_argument('--lr', type=float, default=1e-4, help='Initial learning rate.')
 parser.add_argument('-e', '--epoch', type=int, default=300, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=128, help='Number of samples in a minibatch.')
 parser.add_argument('--seed', type=int, default=42, help='Number of training epochs.')
@@ -235,7 +235,7 @@ def main():
     ).to(device)
     print("---- MODEL ")
     print(model)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr,weight_decay=1e-4)
     criterion = gaeloss
     label_onehot = torch.eye(100, dtype=torch.float)
 
@@ -443,10 +443,7 @@ def main():
             # for data in train_dataset:
             for batch_idx, data in enumerate(train_dataset):
                 optimizer.zero_grad()
-                print("DAAATA", data["sub_feat"], data["sub_adj"])
                 mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-                print("------------------------ Train MU,lovgvar")
-                print(mu,logvar)
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
                 org_logit = classifier(data)
