@@ -5,9 +5,10 @@
 import argparse
 import os
 from networkx.algorithms.components.connected import connected_components
-
+from sklearn.model_selection import StratifiedKFold, train_test_split
 import sklearn.metrics as metrics
 from functools import partial
+from sklearn.model_selection import StratifiedKFold
 from tensorboardX import SummaryWriter
 
 import sys
@@ -19,15 +20,25 @@ import torch
 import random
 import numpy as np
 import pandas as pd
+import torch_geometric
 from tqdm import tqdm
 import networkx as nx
 import torch.nn.functional as F
+from brainGNN.dataset.brain_dataset import BrainDataset, dense_to_ind_val, ind_val_to_dense
+from brainGNN.get_transform import get_transform
+from brainGNN.models.brainnn import build_model, load_checkpoint
+from brainGNN.utils import get_y
 import causaleffect
 from torch import nn, optim
-from gae.model import VGAE3MLP
+from gae.model import VBGAEMLP, VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
+from torch.utils.data import Subset
+from torch_geometric.loader import DataLoader
+
 
 import sys
+
+from geo_utils import to_edge_idx
 dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(dir_path, 'gnnexp'))
 
@@ -71,6 +82,45 @@ parser.add_argument('--retrain', action='store_true')
 parser.add_argument('--patient', type=int, default=100, help='Patient for early stopping.')
 parser.add_argument('--plot_info_flow', action='store_true')
 
+#Brain GNN args
+
+parser.add_argument('--dataset_name', type=str,
+                    choices=['PPMI', 'HIV', 'BP', 'ABCD', 'PNC', 'ABIDE'],
+                    default="ABIDE")
+parser.add_argument('--view', type=int, default=1)
+parser.add_argument('--node_features', type=str,
+                    choices=['identity', 'degree', 'degree_bin', 'LDP', 'node2vec', 'adj', 'diff_matrix',
+                                'eigenvector', 'eigen_norm'],
+                    default='adj')
+parser.add_argument('--pooling', type=str,
+                    choices=['sum', 'concat', 'mean'],
+                    default='concat')
+
+
+parser.add_argument('--model_name', type=str, default='gcn')
+parser.add_argument('--gcn_mp_type', type=str, default="weighted_sum") 
+# gat_mp_type choices: attention_weighted, attention_edge_weighted, sum_attention_edge, edge_node_concate, node_concate
+parser.add_argument('--gat_mp_type', type=str, default="attention_weighted") 
+
+parser.add_argument('--enable_nni', action='store_true')
+parser.add_argument('--n_GNN_layers', type=int, default=2)
+parser.add_argument('--n_MLP_layers', type=int, default=1)
+parser.add_argument('--num_heads', type=int, default=2)
+parser.add_argument('--hidden_dim', type=int, default=256)
+parser.add_argument('--gat_hidden_dim', type=int, default=8)
+parser.add_argument('--edge_emb_dim', type=int, default=256)
+parser.add_argument('--bucket_sz', type=float, default=0.05)
+# parser.add_argument('--weight_decay', type=float, default=1e-4)
+parser.add_argument('--dropout_braingnn', type=float, default=0.5)
+
+parser.add_argument('--repeat', type=int, default=1)
+parser.add_argument('--k_fold_splits', type=int, default=5)
+parser.add_argument('--test_interval', type=int, default=5)
+parser.add_argument('--test_batch_size', type=int, default=16)
+
+parser.add_argument('--diff', type=float, default=0.2)
+parser.add_argument('--mixup', type=int, default=1) #[0, 1]
+
 args = parser.parse_args()
 
 if args.gpu and torch.cuda.is_available():
@@ -105,6 +155,18 @@ def graph_labeling(G):
             old_strings = new_strings
     return G
 
+def train_val_dataset(dataset, val_split=0.25,test_split=0.25):
+    train_val_idx, test_idx = train_test_split(list(range(len(dataset))), test_size=test_split)
+    
+    train_idx, val_idx = train_test_split(train_val_idx, test_size=val_split)
+  
+    
+    # datasets = {}
+    # datasets['train'] = Subset(dataset, train_idx)
+    # datasets['val'] = Subset(dataset, val_idx)
+    # datasets['test'] = Subset(dataset, test_idx)
+    
+    return  train_idx, val_idx ,test_idx
 def preprocess_graph(adj):
     adj_ = adj + np.eye(adj.shape[0])
     rowsum = np.array(adj_.sum(1))
@@ -135,22 +197,23 @@ def main():
     cg_dict = ckpt["cg"] # get computation graph
     input_dim = cg_dict["feat"].shape[2] 
     num_classes = cg_dict["pred"].shape[2]
-    print("input dim: ", input_dim, "; num classes: ", num_classes)
+    
+        
+    dataset = BrainDataset(root='abdi-dataset/abdi',
+                           name="ABIDE",
+                           pre_transform=get_transform(args.node_features))
+    
+    y = get_y(dataset)
+    input_dim = dataset[0].x.shape[1]
+    nodes_num = dataset.num_nodes
+    
 
-    # Explain Graph prediction
-    classifier = models.GcnEncoderGraph(
-        input_dim=input_dim,
-        hidden_dim=20,
-        embedding_dim=20,
-        label_dim=num_classes,
-        num_layers=3,
-        bn=False,
-        args=argparse.Namespace(gpu=args.gpu,bias=True,method=None),
-    ).to(device)
 
-    # load state_dict (obtained by model.state_dict() when saving checkpoint)
-    classifier.load_state_dict(ckpt["model_state"])
+   # classifier.load_state_dict(ckpt["model_state"], )
+    classifier = build_model(args, device, "gcn",input_dim , nodes_num )
+    load_checkpoint(classifier, "ckpt/model_brainGnn.pth" )
     classifier.eval()
+
     if args.output is None:
         args.output = args.dataset
 
@@ -169,11 +232,16 @@ def main():
         args.encoder_output, args.decoder_hidden1, args.decoder_hidden2,
         args.K, args.dropout
     ).to(device)
+
+
+
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = gaeloss
     label_onehot = torch.eye(100, dtype=torch.float)
+
     class GraphSampler(torch.utils.data.Dataset):
-        """ Sample graphs and nodes in graph
+        """
+          Sample graphs and nodes in graph
         """
         def __init__(
             self,
@@ -182,14 +250,15 @@ def main():
             self.graph_idxs = graph_idxs
             self.graph_data = []
             for graph_idx in graph_idxs:
-                adj = cg_dict["adj"][graph_idx].float()
-                label = cg_dict["label"][graph_idx].long()
-                feat = cg_dict["feat"][graph_idx, :].float()
-                G = graph_labeling(nx.from_numpy_array(cg_dict["adj"][graph_idx].numpy()))
+                data = dataset[graph_idx]
+                adj_org = dataset.adj[graph_idx]
+                adj = adj_org.float()
+                label = torch.Tensor(y[graph_idx])
+                feat = data.x.float()
+                G = graph_labeling(nx.from_numpy_array(adj_org.numpy()))
                 graph_label = np.array([G.nodes[node]['string'] for node in G])
                 graph_label_onehot = label_onehot[graph_label]
                 sub_feat = torch.cat((feat, graph_label_onehot), dim=1)
-                adj_label = adj + np.eye(adj.shape[0])
                 adj_label = adj + np.eye(adj.shape[0])
                 n_nodes = adj.shape[0]
                 graph_size = torch.count_nonzero(adj.sum(-1))
@@ -204,9 +273,12 @@ def main():
                     "sub_feat": sub_feat.to(device).float(), 
                     "sub_label": label.to(device).float(), 
                     "adj_label": adj_label.to(device).float(),
-                    "n_nodes": torch.Tensor([n_nodes])[0].to(device),
+                    "n_nodes": n_nodes,
                     "pos_weight": pos_weight.to(device),
-                    "norm": norm.to(device)
+                    "norm": norm.to(device),
+                    "edge_index": dataset[graph_idx].edge_index,
+                    "edge_attr": dataset[graph_idx].edge_attr,
+                    "x": dataset[graph_idx].x,
                 }]
 
         def __len__(self):
@@ -215,64 +287,89 @@ def main():
         def __getitem__(self, idx):
             return self.graph_data[idx]
 
-    train_idxs = np.array(cg_dict['train_idx'])
-    val_idxs = np.array(cg_dict['val_idx'])
-    test_idxs = np.array(cg_dict['test_idx'])
-    train_graphs = GraphSampler(train_idxs)
-   
+    
+    
+    
+    train_idx, val_idx, test_idx = train_val_dataset(dataset)
+    train_idx = np.sort(np.array(train_idx))
+    train_graphs = GraphSampler(range(len(train_idx)))
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=0,
+        drop_last=True
     )
-    val_graphs = GraphSampler(val_idxs)
+    val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
         val_graphs,
-        batch_size=1000,
+        batch_size=1,
         shuffle=False,
         num_workers=0,
     )
-    test_graphs = GraphSampler(test_idxs)
+    test_graphs = GraphSampler(test_idx)
     test_dataset = torch.utils.data.DataLoader(
         test_graphs,
-        batch_size=1000,
+        batch_size=1,
         shuffle=False,
         num_workers=0,
     )
+        #VBGAE
+    nfeat_list = [input_dim + 100, 64, 32, 16, 16]
+    nlay = 4
+    nblock = 1
+    dropout = 0
+    print(train_graphs[0]['graph_size'])
+    num_edges = train_graphs[0]['graph_size']  ** 2
+    wup=1
+    mul_type='norm_first'
+    weight_decay = 5e-3
+    
+    model = VBGAEMLP(
+        nfeat_list, dropout, nlay, nblock, num_edges, nfeat_list[-1], nfeat_list[-1]
+    ).to(device)
+    print(model)
 
     def eval_model(dataset, prefix=''):
         model.eval()
         with torch.no_grad():
             for data in dataset:
-                labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+                # labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+                labels = data["sub_label"]
                 recovered, mu, logvar = model(data['sub_feat'], data['sub_adj'])
+                recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
+                            x=data['sub_feat'],
+                            adj_normt=data['adj_norm'],
+                            warm_up=wup, training=True,
+                            mul_type=mul_type,
+                            graph_size=data["graph_size"]
+                            )
                 recovered_adj = torch.sigmoid(recovered)
                 nll_loss =  criterion(recovered, mu, logvar, data).mean()
                 org_adjs = data['sub_adj']
-                org_logits = classifier(data['feat'], data['sub_adj'])[0]
-                org_probs = F.softmax(org_logits, dim=1)
-                org_log_probs = F.log_softmax(org_logits, dim=1)
+                org_logits = classifier(data)[0]
+                org_probs = F.softmax(org_logits.unsqueeze(0), dim=1)
+                org_log_probs = F.log_softmax(org_logits.unsqueeze(0), dim=1)
                 masked_recovered_adj = recovered_adj * data['sub_adj']
-                recovered_logits = classifier(data['feat'], masked_recovered_adj)[0]
-                recovered_probs = F.softmax(recovered_logits, dim=1)
-                recovered_log_probs = F.log_softmax(recovered_logits, dim=1)
+                recovered_logits = classifier(data['feat'], masked_recovered_adj.squeeze(0))[0]
+                recovered_probs = F.softmax(recovered_logits.unsqueeze(0), dim=1)
+                recovered_log_probs = F.log_softmax(recovered_logits.unsqueeze(0), dim=1)
                 alpha_mu = torch.zeros_like(mu)
                 alpha_mu[:,:,:args.K] = mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_logits = classifier(data['feat'], masked_alpha_adj)[0]
+                alpha_logits = classifier(data['feat'], masked_alpha_adj.squeeze(0))[0]
                 beta_mu = torch.zeros_like(mu)
                 beta_mu[:,:,args.K:] = mu[:,:,args.K:]
                 beta_adj = torch.sigmoid(model.dc(beta_mu))
                 masked_beta_adj = beta_adj * data['sub_adj']
-                beta_logits = classifier(data['feat'], masked_beta_adj)[0]
+                beta_logits = classifier(data['feat'], masked_beta_adj.squeeze(0))[0]
                 causal_loss = []
                 beta_info = []
                 
                 for idx in random.sample(range(0, data['feat'].shape[0]), args.NX):                 
-                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
-                    _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
+                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
+                    _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
                     causal_loss += [_causal_loss]
                     beta_info += [_beta_info]
                     for A_idx in random.sample(range(0, data['feat'].shape[0]), args.NA-1):
@@ -282,22 +379,22 @@ def main():
                             perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
                         else:
                             perm_adj = data['sub_adj'][A_idx]
-                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device)
-                        _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device)
+                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device,brain=True)
+                        _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device,brain=True)
                         causal_loss += [_causal_loss]
                         beta_info += [_beta_info]
                 causal_loss = torch.stack(causal_loss).mean()
                 alpha_info = causal_loss
                 beta_info = torch.stack(beta_info).mean()
-                klloss = F.kl_div(F.log_softmax(alpha_logits, dim=1), org_probs, reduction='mean')
+                klloss = F.kl_div(F.log_softmax(alpha_logits.unsqueeze(0), dim=1), org_probs, reduction='mean')
             pred_labels = torch.argmax(org_probs,axis=1)
             org_acc = (torch.argmax(org_probs,axis=1) == torch.argmax(recovered_probs,axis=1)).float().mean()
             pred_acc = (torch.argmax(recovered_probs,axis=1) == labels).float().mean()
             kl_pred_org = F.kl_div(recovered_log_probs, org_probs, reduction='mean')
-            alpha_probs = F.softmax(alpha_logits, dim=1)
-            alpha_log_probs = F.log_softmax(alpha_logits, dim=1)
-            beta_probs = F.softmax(beta_logits, dim=1)
-            beta_log_probs = F.log_softmax(beta_logits, dim=1)
+            alpha_probs = F.softmax(alpha_logits.unsqueeze(0), dim=1)
+            alpha_log_probs = F.log_softmax(alpha_logits.unsqueeze(0), dim=1)
+            beta_probs = F.softmax(beta_logits.unsqueeze(0), dim=1)
+            beta_log_probs = F.log_softmax(beta_logits.unsqueeze(0), dim=1)
             alpha_gt_acc = (torch.argmax(alpha_probs,axis=1) == labels).float().mean()
             alpha_pred_acc = (torch.argmax(alpha_probs,axis=1) == pred_labels).float().mean()
             alpha_kld = F.kl_div(alpha_log_probs, org_probs, reduction='mean')
@@ -356,15 +453,22 @@ def main():
         writer = SummaryWriter(comment=args.output)
         os.makedirs('explanation/%s' % args.output, exist_ok=True)
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
-            # print("------- Epoch %2d ------" % epoch)
             model.train()
             train_losses = []
+            # for data in train_dataset:
             for batch_idx, data in enumerate(train_dataset):
                 optimizer.zero_grad()
-                mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-                sample_mu = model.reparameterize(mu, logvar)
-                recovered = model.dc(sample_mu)
-                org_logit = classifier(data['feat'], data['sub_adj'])[0]
+                # mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
+                # sample_mu = model.reparameterize(mu, logvar)
+                # recovered = model.dc(sample_mu)
+                recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
+                            x=data['sub_feat'],
+                            adj_normt=data['sub_adj'],
+                            warm_up=wup, training=True,
+                            mul_type=mul_type,
+                            graph_size=data["n_nodes"],
+                            )
+                org_logit = classifier(data)
                 org_probs = F.softmax(org_logit, dim=1)
                 if args.coef_lambda:
                     nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
@@ -374,15 +478,14 @@ def main():
                 alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_logit = classifier(data['feat'], masked_alpha_adj)[0]
+                alpha_logit = classifier(data)[0]
                 alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
                 if args.coef_causal:
                     causal_loss = []
                     NX = min(data['feat'].shape[0], args.NX)
                     NA = min(data['feat'].shape[0], args.NA)
-            
                     for idx in random.sample(range(0, data['feat'].shape[0]), NX):
-                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
+                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
                         causal_loss += [_causal_loss]
                         for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
                             if args.node_perm:
@@ -391,14 +494,13 @@ def main():
                                 perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
                             else:
                                 perm_adj = data['sub_adj'][A_idx]
-                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device)
+                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
                             causal_loss += [_causal_loss]
                     causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
                 else:
                     causal_loss = 0
                 if args.coef_kl:
-
-                    klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit,dim=1), org_probs, reduction='mean')
+                    klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit.unsqueeze(0),dim=1), org_probs, reduction='mean')
                 else:
                     klloss = 0
                 if args.coef_size:
@@ -406,14 +508,44 @@ def main():
                 else:
                     size_loss = 0
 
-                loss = nll_loss + causal_loss + klloss + size_loss
+                l2_reg = None
+                block_index = 0
+                for layer in range(nlay-1):
+                    l2_reg_lay = None
+                    if layer==0:
+                        for param in model.gcs[str(block_index)].parameters():
+                            if l2_reg_lay is None:
+                                l2_reg_lay = (param**2).sum()
+                            else:
+                                l2_reg_lay = l2_reg_lay + (param**2).sum()
+                        block_index += 1
+                        
+                    else:
+                        for iii in range(nblock):
+                            for param in model.gcs[str(block_index)].parameters():
+                                if l2_reg_lay is None:
+                                    l2_reg_lay = (param**2).sum()
+                                else:
+                                    l2_reg_lay = l2_reg_lay + (param**2).sum()
+                            block_index += 1
+                    
+                    # print(drop_rates, layer)        
+                    l2_reg_lay = (1-drop_rates[layer])*l2_reg_lay
+                    
+                    if l2_reg is None:
+                        l2_reg = l2_reg_lay
+                    else:
+                        l2_reg += l2_reg_lay
+
+                    l2_reg = weight_decay * l2_reg
+                loss = nll_loss + causal_loss + klloss + size_loss+ 0.1 * l2_reg
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
+                print("losses : ", nll_loss, causal_loss, klloss, size_loss)
                 sys.stdout.flush()
             
-            # train_loss = (torch.cat(train_losses)).mean().item()
             nll_loss, causal_loss, klloss, size_loss = torch.tensor(train_losses).mean(0)
             writer.add_scalar("train/nll", nll_loss, epoch)
             writer.add_scalar("train/causal", causal_loss, epoch)
@@ -425,17 +557,18 @@ def main():
             patient -= 1
             if val_loss < best_loss:
                 best_loss = val_loss
-                save_checkpoint('explanation/%s/model.ckpt' % args.output)
+                save_checkpoint('explanation/brain/model.ckpt' % args.output)
                 test_loss = eval_model(test_dataset, 'test')
                 patient = 100
             elif patient <= 0:
                 print("Early stopping!")
                 break
             if epoch % 100 == 0:
-                save_checkpoint('explanation/%s/model-%depoch.ckpt' % (args.output,epoch))
+                save_checkpoint('explanation/brain/model-%depoch.ckpt' % (args.output,epoch))
+        save_checkpoint('explanation/brain/model-%depoch.ckpt' % (args.output,epoch))
         print("Train time:", time.time() - start_time)
         writer.close()
-        checkpoint = torch.load('explanation/%s/model.ckpt' % args.output)
+        checkpoint = torch.load('explanation/brain/model.ckpt' % args.output)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
 
@@ -445,10 +578,12 @@ def main():
     results = []
     with torch.no_grad():
         for data in test_dataset:
-            labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+            # labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
+
+            labels = data["sub_label"]
             mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
-            org_logits = classifier(data['feat'], data['sub_adj'])[0]
-            org_probs = F.softmax(org_logits, dim=1)
+            org_logits = classifier(data)[0]
+            org_probs = F.softmax(org_logits.unsqueeze(0), dim=1)
             pred_labels = torch.argmax(org_probs,axis=1)
             alpha_mu = torch.zeros_like(mu)
             std = torch.exp(logvar)
@@ -462,16 +597,14 @@ def main():
                 threshold = torch.gather(flatten_alpha_adj.sort(1,descending=True).values, 1, topk)
                 threshold = torch.maximum(threshold, torch.ones_like(threshold)*1E-6)
                 topk_alpha_adj = (flatten_alpha_adj > threshold).float().view(data['sub_adj'].shape)
-                alpha_logits = classifier(data['feat'], topk_alpha_adj)[0]
-                alpha_log_probs = F.log_softmax(alpha_logits, dim=1)
-
-
+                alpha_logits = classifier(data['feat'], topk_alpha_adj.squeeze(0))[0]
+                alpha_log_probs = F.log_softmax(alpha_logits.unsqueeze(0), dim=1)
                 results += [{
                     "sparsity": sparsity,
                     "alpha_topk": topk_alpha_adj.sum((1,2)).mean().item()/2,
                     "alpha_sparsity": (topk_alpha_adj.sum((1,2))/data['sub_adj'].sum((1,2))).mean().item(),
-                    "alpha_gt_acc": (torch.argmax(alpha_logits,axis=1) == labels).float().mean().item(),
-                    "alpha_pred_acc": (torch.argmax(alpha_logits,axis=1) == pred_labels).float().mean().item(),
+                    "alpha_gt_acc": (torch.argmax(alpha_logits.unsqueeze(0),axis=1) == labels).float().mean().item(),
+                    "alpha_pred_acc": (torch.argmax(alpha_logits.unsqueeze(0),axis=1) == pred_labels).float().mean().item(),
                     "alpha_kld": F.kl_div(alpha_log_probs, org_probs, reduction='batchmean').item()
                 }]
     columns = results[0].keys()
@@ -484,10 +617,10 @@ def main():
         with torch.no_grad():
             infos = [
                 [
-                    - causaleffect.joint_uncond_singledim(
+                    - causaleffect.x(
                         ceparams, model.dc, classifier, 
                         data['sub_adj'][idx], data['feat'][idx], 
-                        dim, act=torch.sigmoid, device=device
+                        dim, act=torch.sigmoid, device=device,brain=True,
                     )[0] for dim in range(ceparams['z_dim'])
                 ] for idx in tqdm(range(data['feat'].shape[0]))
             ]

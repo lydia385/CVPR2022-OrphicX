@@ -259,7 +259,7 @@ class VBGAE(nn.Module):
     def forward(self, x, adj_normt, warm_up=1, adj=None, training=True
                 , mul_type='norm_first', samp_type='rel_ber', graph_size=None):
 
-        logvar = 0
+        logvar = 0  
         mu = 0
         h_perv = x
         kld_loss = 0.0
@@ -277,7 +277,6 @@ class VBGAE(nn.Module):
             if i==0:
                 # cut mast matrix to the number of edges and reshape it based on Num_nodes X Num_nodes aka adj matrix
                 mask_mat = torch.reshape(mask_vec[:num_edges], (num_nodes, num_nodes)).cpu()
-                
                 if mul_type=='norm_sec':
                     # multiply adj by mask add self loop then normalize
                     adj_lay = normalize_torch(torch.mul(mask_mat, adj) + torch.eye(adj.shape[0]).cpu())
@@ -305,7 +304,6 @@ class VBGAE(nn.Module):
                     if mul_type=='norm_sec':
                         adj_lay = normalize_torch(torch.mul(mask_mat, adj) + torch.eye(adj.shape[0]).cpu())
                     elif mul_type=='norm_first':
-
                         adj_lay = torch.mul(mask_mat, adj_normt).cpu()
                     x = torch.squeeze(x)
                     adj_lay = torch.squeeze(adj_lay)                   

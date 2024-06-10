@@ -389,7 +389,7 @@ def main():
 
         l2_reg = None
         block_index = 0
-        for layer in range(nlay):
+        for layer in range(nlay-1):
             l2_reg_lay = None
             if layer==0:
                 for param in model.gcs[str(block_index)].parameters():
@@ -408,6 +408,7 @@ def main():
                             l2_reg_lay = l2_reg_lay + (param**2).sum()
                     block_index += 1
                     
+            # print("drop rates ", drop_rates, "layer ", layer )
             l2_reg_lay = (1-drop_rates[layer])*l2_reg_lay
             
             if l2_reg is None:
@@ -416,7 +417,7 @@ def main():
                 l2_reg += l2_reg_lay
 
             l2_reg = weight_decay * l2_reg
-            return nll_loss, org_logits, alpha_logits, alpha_sparsity, kld_loss, l2_reg
+        return nll_loss, org_logits, alpha_logits, alpha_sparsity, kld_loss, l2_reg
 
     os.makedirs('explanation/%s' % args.output, exist_ok=True)
 

@@ -54,7 +54,7 @@ color_map = ['gray', 'blue', 'purple', 'red', 'brown', 'green', 'orange', 'olive
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='Mutagenicity', help='Name of dataset.')
 parser.add_argument('--output', type=str, default=None, help='output path.')
-parser.add_argument('--lr', type=float, default=0.01, help='Initial learning rate.')
+parser.add_argument('--lr', type=float, default=0.001, help='Initial learning rate.')
 parser.add_argument('-e', '--epoch', type=int, default=300, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=128, help='Number of samples in a minibatch.')
 parser.add_argument('--seed', type=int, default=42, help='Number of training epochs.')
@@ -62,9 +62,9 @@ parser.add_argument('--max_grad_norm', type=float, default=1, help='max_grad_nor
 parser.add_argument('--dropout', type=float, default=0., help='Dropout rate (1 - keep probability).')
 parser.add_argument('--encoder_hidden1', type=int, default=32, help='Number of units in hidden layer 1.')
 parser.add_argument('--encoder_hidden2', type=int, default=16, help='Number of units in hidden layer 2.')
-parser.add_argument('--encoder_output', type=int, default=16, help='Dim of output of VGAE encoder.')
-parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
-parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder  hidden layer 2.')
+parser.add_argument('--encoder_output', type=int, default=8, help='Dim of output of VGAE encoder.')
+parser.add_argument('--decoder_hidden1', type=int, default=8, help='Number of units in decoder hidden layer 1.')
+parser.add_argument('--decoder_hidden2', type=int, default=8, help='Number of units in decoder  hidden layer 2.')
 parser.add_argument('--K', type=int, default=8, help='Number of casual factors.')
 parser.add_argument('--coef_lambda', type=float, default=0.01, help='Coefficient of gae loss.')
 parser.add_argument('--coef_kl', type=float, default=0.01, help='Coefficient of gae loss.')
@@ -206,12 +206,13 @@ def main():
     y = get_y(dataset)
     input_dim = dataset[0].x.shape[1]
     nodes_num = dataset.num_nodes
+
     
 
 
    # classifier.load_state_dict(ckpt["model_state"], )
     classifier = build_model(args, device, "gcn",input_dim , nodes_num )
-    load_checkpoint(classifier, "ckpt/model_brainGnn.pth" )
+    # load_checkpoint(classifier, "ckpt/model_brainGnn.pth" )
     classifier.eval()
 
     if args.output is None:
@@ -232,6 +233,8 @@ def main():
         args.encoder_output, args.decoder_hidden1, args.decoder_hidden2,
         args.K, args.dropout
     ).to(device)
+    print("---- MODEL ")
+    print(model)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = gaeloss
     label_onehot = torch.eye(100, dtype=torch.float)
@@ -248,10 +251,10 @@ def main():
             self.graph_data = []
             for graph_idx in graph_idxs:
                 data = dataset[graph_idx]
-                adj_org = dataset.adj[graph_idx]
-                adj = adj_org.float()
+                adj_org = np.abs(dataset.adj[graph_idx])
+                adj = np.abs(adj_org.float())
                 label = torch.Tensor(y[graph_idx])
-                feat = data.x.float()
+                feat = np.abs(data.x.float())
                 G = graph_labeling(nx.from_numpy_array(adj_org.numpy()))
                 graph_label = np.array([G.nodes[node]['string'] for node in G])
                 graph_label_onehot = label_onehot[graph_label]
@@ -262,6 +265,9 @@ def main():
                 pos_weight = float(adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
                 pos_weight = torch.from_numpy(np.array(pos_weight))
                 norm = torch.tensor(adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.sum()) * 2))
+                edge_attr = np.abs(dataset[graph_idx].edge_attr)
+                x = np.abs(dataset[graph_idx].x)
+
                 self.graph_data += [{
                     "graph_idx": graph_idx,
                     "graph_size": graph_size, 
@@ -274,8 +280,8 @@ def main():
                     "pos_weight": pos_weight.to(device),
                     "norm": norm.to(device),
                     "edge_index": dataset[graph_idx].edge_index.to(device),
-                    "edge_attr": dataset[graph_idx].edge_attr.to(device),
-                    "x": dataset[graph_idx].x.to(device),
+                    "edge_attr": edge_attr.to(device),
+                    "x": x.to(device),
                 }]
 
         def __len__(self):
@@ -290,6 +296,10 @@ def main():
     train_idx, val_idx, test_idx = train_val_dataset(dataset)
     train_idx = np.sort(np.array(train_idx))
     train_graphs = GraphSampler(range(len(train_idx)))
+    print("---"*100)
+    print("DATASET")
+    print(train_graphs[0]["x"])
+    print(train_graphs[0]["sub_adj"])
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
         batch_size=args.batch_size,
@@ -433,7 +443,10 @@ def main():
             # for data in train_dataset:
             for batch_idx, data in enumerate(train_dataset):
                 optimizer.zero_grad()
+                print("DAAATA", data["sub_feat"], data["sub_adj"])
                 mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
+                print("------------------------ Train MU,lovgvar")
+                print(mu,logvar)
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
                 org_logit = classifier(data)

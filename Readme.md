@@ -16,10 +16,11 @@ python orphicx_node.py --dataset syn4 --plot_info_flow
 python orphicx_graph.py --dataset Mutagenicity --plot_info_flow
 python orphicx_graph.py --dataset NCI1 --plot_info_flow
 
-### lyax
+## brain
 
 python orphicx_graph.py --dataset NCI1 --plot_info_flow --retrain
 python orphicx_graph_brain.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --batch_size 1 --retrain
+python lyax_graph_brain.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --batch_size 1 --retrain
 
 ### for colab
 
