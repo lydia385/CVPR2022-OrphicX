@@ -460,7 +460,8 @@ def main():
                                                                 classifier,
                                                                 dataset[idx]['sub_adj'],
                                                                 dataset[idx]['feat'],
-                                                                node_idx=dataset[idx]['node_idx_new'], act=torch.sigmoid, 
+                                                                node_idx=dataset[idx]['node_idx_new'], 
+                                                                act=torch.sigmoid, 
                                                                 device=device
                                                             )
                     causal_loss += [_causal_loss]

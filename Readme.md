@@ -18,9 +18,9 @@ python orphicx_graph.py --dataset NCI1 --plot_info_flow
 
 ## brain
 
-python orphicx_graph.py --dataset NCI1 --plot_info_flow --retrain
-python orphicx_graph_brain.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --batch_size 1 --retrain
-python lyax_graph_brain.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --batch_size 1 --retrain
+python orphicx_graph.py --dataset NCI1 --plot_info_flow --retrain --coef_size 0.3
+python orphicx_graph_brain.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --batch_size 1 --retrain --coef_size 0.3
+python lyax_graph_brain.py --dataset NCI1 --plot_info_flow --gcn_mp_type edge_node_concate --batch_size 1 --retrain --coef_size 0.3
 
 ### for colab
 

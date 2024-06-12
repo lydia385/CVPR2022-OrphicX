@@ -61,8 +61,8 @@ parser.add_argument('--coef_causal', type=float, default=1.0, help='Coefficient 
 parser.add_argument('--coef_size', type=float, default=0.0, help='Coefficient of size loss.')
 parser.add_argument('--NX', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
 parser.add_argument('--NA', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nalpha', type=int, default=5, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nbeta', type=int, default=1, help='Number of monte-carlo samples per noncausal factor.')
+parser.add_argument('--Nalpha', type=int, default=25, help='Number of monte-carlo samples per causal factor.')
+parser.add_argument('--Nbeta', type=int, default=10, help='Number of monte-carlo samples per noncausal factor.')
 parser.add_argument('--node_perm', action="store_true", help='Use node permutation as data augmentation for causal training.')
 parser.add_argument('--load_ckpt', default=None, help='Load parameters from checkpoint.')
 parser.add_argument('--gpu', action='store_true')
@@ -407,6 +407,7 @@ def main():
                     size_loss = 0
 
                 loss = nll_loss + causal_loss + klloss + size_loss
+                print("Losses : ", nll_loss, causal_loss, klloss, size_loss)
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()

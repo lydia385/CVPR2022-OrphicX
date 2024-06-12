@@ -72,8 +72,8 @@ parser.add_argument('--coef_causal', type=float, default=1.0, help='Coefficient 
 parser.add_argument('--coef_size', type=float, default=0.0, help='Coefficient of size loss.')
 parser.add_argument('--NX', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
 parser.add_argument('--NA', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nalpha', type=int, default=5, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nbeta', type=int, default=1, help='Number of monte-carlo samples per noncausal factor.')
+parser.add_argument('--Nalpha', type=int, default=25, help='Number of monte-carlo samples per causal factor.')
+parser.add_argument('--Nbeta', type=int, default=100, help='Number of monte-carlo samples per noncausal factor.')
 parser.add_argument('--node_perm', action="store_true", help='Use node permutation as data augmentation for causal training.')
 parser.add_argument('--load_ckpt', default=None, help='Load parameters from checkpoint.')
 parser.add_argument('--gpu', action='store_true')
@@ -81,6 +81,7 @@ parser.add_argument('--resume', action='store_true')
 parser.add_argument('--retrain', action='store_true')
 parser.add_argument('--patient', type=int, default=100, help='Patient for early stopping.')
 parser.add_argument('--plot_info_flow', action='store_true')
+parser.add_argument('--bayesian_coef', type=float, default=0.2, help='Coeficient of bayesian loss')
 
 #Brain GNN args
 
@@ -296,10 +297,10 @@ def main():
     train_idx, val_idx, test_idx = train_val_dataset(dataset)
     train_idx = np.sort(np.array(train_idx))
     train_graphs = GraphSampler(range(len(train_idx)))
-    print("---"*100)
-    print("DATASET")
-    print(train_graphs[0]["x"])
-    print(train_graphs[0]["sub_adj"])
+    val_graphs = GraphSampler(val_idx)
+    test_graphs = GraphSampler(test_idx)
+
+
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
         batch_size=args.batch_size,
@@ -307,14 +308,12 @@ def main():
         num_workers=0,
         drop_last=True
     )
-    val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
         val_graphs,
         batch_size=1,
         shuffle=False,
         num_workers=0,
     )
-    test_graphs = GraphSampler(test_idx)
     test_dataset = torch.utils.data.DataLoader(
         test_graphs,
         batch_size=1,
@@ -488,6 +487,7 @@ def main():
                     size_loss = 0
             
                 loss = nll_loss + causal_loss + klloss + size_loss
+                print("LOSSES", nll_loss, causal_loss, klloss, size_loss)
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()

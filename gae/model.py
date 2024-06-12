@@ -35,7 +35,7 @@ class VGAE3(VGAE):
     def __init__(self, input_feat_dim, hidden_dim1, hidden_dim2, output_dim, dropout):
         super(VGAE, self).__init__()
         self.gc1 = GraphConvolution(input_feat_dim, hidden_dim2, dropout, act=F.relu)
-        # self.gc1_1 = GraphConvolution(hidden_dim1, hidden_dim2, dropout, act=F.relu)
+        self.gc1_1 = GraphConvolution(hidden_dim1, hidden_dim2, dropout, act=F.relu)
         
         self.gc2 = GraphConvolution(hidden_dim2, output_dim, dropout, act=lambda x: x)
         self.gc3 = GraphConvolution(hidden_dim2, output_dim, dropout, act=lambda x: x)
@@ -43,11 +43,9 @@ class VGAE3(VGAE):
 
     def encode(self, x, adj):
         hidden1 = self.gc1(x, adj)
-        print("hidden 1 ", hidden1)
-        # hidden2 = self.gc1_1(hidden1, adj)
-        # print("hidden 2 ", hidden1)
-        mu, logvar = self.gc2(hidden1, adj), self.gc3(hidden1, adj)
-        # mu, logvar = self.gc2(hidden2, adj), self.gc3(hidden2, adj)
+        hidden2 = self.gc1_1(hidden1, adj)
+        # mu, logvar = self.gc2(hidden1, adj), self.gc3(hidden1, adj)
+        mu, logvar = self.gc2(hidden2, adj), self.gc3(hidden2, adj)
         return mu, logvar
 
 

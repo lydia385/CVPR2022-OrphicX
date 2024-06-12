@@ -26,18 +26,16 @@ class GraphConvolution(Module):
     
 
     def forward(self, input, adj):
-        input=torch.nn.functional.normalize(input)
+        input=F.normalize(input)
+
         input = F.dropout(input, self.dropout, self.training)
-        print("After dropout:", input.shape)
 
         support = self.linear(input)
-        print("After linear transformation:", support.shape)
 
         output = torch.bmm(adj, support)
-        print("After batch matrix multiplication:", output)
 
         output = self.act(output)
-        print("After activation:", output)
+        
         return output
 
     def __repr__(self):
@@ -59,11 +57,13 @@ class BGraphConvolution(nn.Module):
     
     def reset_parameters(self):
         stdv = 1. / math.sqrt(self.weight.size(1))
-        torch.nn.init.normal_(tensor=self.weight, std=stdv)
+        # torch.nn.init.normal_(tensor=self.weight, std=stdv)
+        torch.nn.init.xavier_uniform_(tensor=self.weight)
         if self.bias is not None:
             self.bias.data.uniform_(-stdv, stdv)
     
     def forward(self, inp, adj):
+        # inp=F.normalize(inp)
         support = torch.mm(inp, self.weight)
         output = torch.mm(adj, support)
         if self.bias is not None:

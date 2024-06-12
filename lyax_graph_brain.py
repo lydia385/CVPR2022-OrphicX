@@ -34,7 +34,7 @@ from gae.model import VBGAEMLP, VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
 from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
-
+import scipy.sparse as sp
 
 import sys
 
@@ -61,10 +61,10 @@ parser.add_argument('--seed', type=int, default=42, help='Number of training epo
 parser.add_argument('--max_grad_norm', type=float, default=1, help='max_grad_norm.')
 parser.add_argument('--dropout', type=float, default=0., help='Dropout rate (1 - keep probability).')
 parser.add_argument('--encoder_hidden1', type=int, default=32, help='Number of units in hidden layer 1.')
-parser.add_argument('--encoder_hidden2', type=int, default=16, help='Number of units in hidden layer 2.')
-parser.add_argument('--encoder_output', type=int, default=16, help='Dim of output of VGAE encoder.')
-parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
-parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder  hidden layer 2.')
+parser.add_argument('--encoder_hidden2', type=int, default=8, help='Number of units in hidden layer 2.')
+parser.add_argument('--encoder_output', type=int, default=8, help='Dim of output of VGAE encoder.')
+parser.add_argument('--decoder_hidden1', type=int, default=8, help='Number of units in decoder hidden layer 1.')
+parser.add_argument('--decoder_hidden2', type=int, default=8, help='Number of units in decoder  hidden layer 2.')
 parser.add_argument('--K', type=int, default=8, help='Number of casual factors.')
 parser.add_argument('--coef_lambda', type=float, default=0.01, help='Coefficient of gae loss.')
 parser.add_argument('--coef_kl', type=float, default=0.01, help='Coefficient of gae loss.')
@@ -73,7 +73,7 @@ parser.add_argument('--coef_size', type=float, default=0.0, help='Coefficient of
 parser.add_argument('--NX', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
 parser.add_argument('--NA', type=int, default=1, help='Number of monte-carlo samples per causal factor.')
 parser.add_argument('--Nalpha', type=int, default=5, help='Number of monte-carlo samples per causal factor.')
-parser.add_argument('--Nbeta', type=int, default=1, help='Number of monte-carlo samples per noncausal factor.')
+parser.add_argument('--Nbeta', type=int, default=10, help='Number of monte-carlo samples per noncausal factor.')
 parser.add_argument('--node_perm', action="store_true", help='Use node permutation as data augmentation for causal training.')
 parser.add_argument('--load_ckpt', default=None, help='Load parameters from checkpoint.')
 parser.add_argument('--gpu', action='store_true')
@@ -81,6 +81,7 @@ parser.add_argument('--resume', action='store_true')
 parser.add_argument('--retrain', action='store_true')
 parser.add_argument('--patient', type=int, default=100, help='Patient for early stopping.')
 parser.add_argument('--plot_info_flow', action='store_true')
+parser.add_argument('--bayesian_coef', type=float, default=0.2, help='Coeficient of bayesian loss')
 
 #Brain GNN args
 
@@ -168,12 +169,18 @@ def train_val_dataset(dataset, val_split=0.25,test_split=0.25):
     
     return  train_idx, val_idx ,test_idx
 def preprocess_graph(adj):
-    adj_ = adj + np.eye(adj.shape[0])
+    #only the non-zero elements are stored along with their row and column indices.
+    adj = sp.coo_matrix(adj)
+    # ensuring each node is connected to itself. This is a common practice to include a node's own features during aggregation
+    adj_ = adj + sp.eye(adj.shape[0])
+    #Calculates the degree of each node + rohom
     rowsum = np.array(adj_.sum(1))
-    degree_mat_inv_sqrt = np.diag(np.power(rowsum, -0.5).flatten())
-    adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt)
-    return torch.from_numpy(adj_normalized).float()
-
+    #inverse square root of the degree matrix.
+    degree_mat_inv_sqrt = sp.diags(np.power(rowsum, -0.5).flatten())
+    #normlize with An=D^-0.5*A(with self-loop)*D^-0.5
+    adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
+    #rj3oha
+    return sparse_mx_to_torch_sparse_tensor(adj_normalized)
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     """Convert a scipy sparse matrix to a torch sparse tensor."""
     sparse_mx = sparse_mx.tocoo().astype(np.float32)
@@ -252,6 +259,7 @@ def main():
             for graph_idx in graph_idxs:
                 data = dataset[graph_idx]
                 adj_org = dataset.adj[graph_idx]
+                adj_norm = preprocess_graph(adj_org)
                 adj = adj_org.float()
                 label = torch.Tensor(y[graph_idx])
                 feat = data.x.float()
@@ -268,7 +276,7 @@ def main():
                 self.graph_data += [{
                     "graph_idx": graph_idx,
                     "graph_size": graph_size, 
-                    "sub_adj": adj.to(device), 
+                    "sub_adj": adj_norm.to(device), 
                     "feat": feat.to(device).float(), 
                     "sub_feat": sub_feat.to(device).float(), 
                     "sub_label": label.to(device).float(), 
@@ -293,6 +301,7 @@ def main():
     train_idx, val_idx, test_idx = train_val_dataset(dataset)
     train_idx = np.sort(np.array(train_idx))
     train_graphs = GraphSampler(range(len(train_idx)))
+
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
         batch_size=args.batch_size,
@@ -300,6 +309,10 @@ def main():
         num_workers=0,
         drop_last=True
     )
+    
+    data_sample = next(iter(train_dataset))
+    print(f"data sample from train dataloader : {data_sample}")
+
     val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
         val_graphs,
@@ -315,11 +328,10 @@ def main():
         num_workers=0,
     )
         #VBGAE
-    nfeat_list = [input_dim + 100, 64, 32, 16, 16]
-    nlay = 4
+    nfeat_list = [input_dim + 100, 16, 8, 8]
+    nlay = 3
     nblock = 1
     dropout = 0
-    print(train_graphs[0]['graph_size'])
     num_edges = train_graphs[0]['graph_size']  ** 2
     wup=1
     mul_type='norm_first'
@@ -336,20 +348,20 @@ def main():
             for data in dataset:
                 # labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
                 labels = data["sub_label"]
-                recovered, mu, logvar = model(data['sub_feat'], data['sub_adj'])
+                # recovered, mu, logvar = model(data['sub_feat'], data['sub_adj'])
                 recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
                             x=data['sub_feat'],
-                            adj_normt=data['adj_norm'],
-                            warm_up=wup, training=True,
+                            adj_normt=data['sub_adj'],
+                            warm_up=wup, 
+                            training=True,
                             mul_type=mul_type,
-                            graph_size=data["graph_size"]
+                            graph_size=data["n_nodes"]
                             )
                 recovered_adj = torch.sigmoid(recovered)
                 nll_loss =  criterion(recovered, mu, logvar, data).mean()
                 org_adjs = data['sub_adj']
                 org_logits = classifier(data)[0]
                 org_probs = F.softmax(org_logits.unsqueeze(0), dim=1)
-                org_log_probs = F.log_softmax(org_logits.unsqueeze(0), dim=1)
                 masked_recovered_adj = recovered_adj * data['sub_adj']
                 recovered_logits = classifier(data['feat'], masked_recovered_adj.squeeze(0))[0]
                 recovered_probs = F.softmax(recovered_logits.unsqueeze(0), dim=1)
@@ -538,16 +550,18 @@ def main():
                         l2_reg += l2_reg_lay
 
                     l2_reg = weight_decay * l2_reg
-                loss = nll_loss + causal_loss + klloss + size_loss+ 0.1 * l2_reg
+                loss = nll_loss + causal_loss + klloss + size_loss + 0.1 * l2_reg +  args.bayesian_coef * kld_loss
+               
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
-                train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
-                print("losses : ", nll_loss, causal_loss, klloss, size_loss)
+                train_losses += [[nll_loss, causal_loss, klloss, size_loss, kld_loss]]
+                print("losses : ", nll_loss, causal_loss, klloss, size_loss, kld_loss)
                 sys.stdout.flush()
             
-            nll_loss, causal_loss, klloss, size_loss = torch.tensor(train_losses).mean(0)
+            nll_loss, causal_loss, klloss, size_loss, kld_loss = torch.tensor(train_losses).mean(0)
             writer.add_scalar("train/nll", nll_loss, epoch)
+            writer.add_scalar("train/bayesian kld_loss", kld_loss, epoch)
             writer.add_scalar("train/causal", causal_loss, epoch)
             writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
             writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
