@@ -35,7 +35,7 @@ parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of u
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
 parser.add_argument('-e', '--epoch', type=int, default=50, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
-parser.add_argument('--lr', type=float, default=0.003, help='Initial learning rate.')
+parser.add_argument('--lr', type=float, default=0.01, help='Initial learning rate.')
 parser.add_argument('--dropout', type=float, default=0., help='Dropout rate (1 - keep probability).')
 parser.add_argument('--dataset', type=str, default='syn1', help='Type of dataset.')
 parser.add_argument('--output', type=str, default=None, help='Path of output dir.')
@@ -384,6 +384,7 @@ def main():
                     args.coef_causal * causal_loss + \
                     args.coef_kl * klloss + \
                     args.coef_size * alpha_sparsity
+
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1)
                 optimizer.step()

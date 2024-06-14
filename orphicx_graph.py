@@ -196,6 +196,7 @@ def main():
                 pos_weight = float(adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
                 pos_weight = torch.from_numpy(np.array(pos_weight))
                 norm = torch.tensor(adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.sum()) * 2))
+                print("sub label ", label)
                 self.graph_data += [{
                     "graph_idx": graph_idx,
                     "graph_size": graph_size, 

@@ -455,11 +455,10 @@ def main():
                 alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_logit = classifier(data)[0]
+                alpha_logit = classifier(data["x"].squeeze(0), adj=masked_alpha_adj.squeeze(0))[0]
                 alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
                 if args.coef_causal:
                     causal_loss = []
-                    data["feat"] = data["feat"]
                     NX = min(data['feat'].shape[0], args.NX)
                     NA = min(data['feat'].shape[0], args.NA)
                     for idx in random.sample(range(0, data['feat'].shape[0]), NX):

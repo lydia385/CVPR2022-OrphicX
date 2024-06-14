@@ -55,7 +55,7 @@ color_map = ['gray', 'blue', 'purple', 'red', 'brown', 'green', 'orange', 'olive
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='Mutagenicity', help='Name of dataset.')
 parser.add_argument('--output', type=str, default=None, help='output path.')
-parser.add_argument('--lr', type=float, default=0.01, help='Initial learning rate.')
+parser.add_argument('--lr', type=float, default=0.00001, help='Initial learning rate.')
 parser.add_argument('-e', '--epoch', type=int, default=300, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=128, help='Number of samples in a minibatch.')
 parser.add_argument('--seed', type=int, default=42, help='Number of training epochs.')
@@ -261,7 +261,7 @@ def main():
                 adj_org = dataset.adj[graph_idx]
                 adj_norm = preprocess_graph(adj_org.numpy())
                 adj = adj_org.float()
-                label = torch.Tensor(y[graph_idx])
+                label = torch.Tensor([y[graph_idx]])
                 feat = data.x.float()
                 G = graph_labeling(nx.from_numpy_array(adj_org.numpy()))
                 graph_label = np.array([G.nodes[node]['string'] for node in G])
@@ -279,7 +279,7 @@ def main():
                     "sub_adj": adj_norm.to(device), 
                     "feat": feat.to(device).float(), 
                     "sub_feat": sub_feat.to(device).float(), 
-                    "sub_label": label.to(device).float(), 
+                    "sub_label": label.squeeze(0).to(device).float(), 
                     "adj_label": adj_label.to(device).float(),
                     "n_nodes": n_nodes,
                     "pos_weight": pos_weight.to(device),
@@ -329,14 +329,14 @@ def main():
         num_workers=0,
     )
         #VBGAE
-    nfeat_list = [input_dim + 100, 16, 8, 8]
-    nlay = 3
+    nfeat_list = [input_dim + 100, 32, 16, 8, 8]
+    nlay = 4
     nblock = 1
     dropout = 0
     num_edges = train_graphs[0]['graph_size']  ** 2
     wup=1
     mul_type='norm_first'
-    weight_decay = 5e-3
+    weight_decay = 5e-2
     
     model = VBGAEMLP(
         nfeat_list, dropout, nlay, nblock, num_edges, nfeat_list[-1], nfeat_list[-1]
@@ -465,19 +465,18 @@ def main():
         model.train()
         start_time = time.time()
         writer = SummaryWriter(comment=args.output)
-        batch = 0
         os.makedirs('explanation/%s' % args.output, exist_ok=True)
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
             model.train()
             train_losses = []
-            # for data in train_dataset:
             for batch_idx, data in enumerate(train_dataset):
+                optimizer.zero_grad()
+            # for data in train_dataset:
             # perm_train = np.random.permutation(num_train)
             # for beg_ind in range(0, num_train, args.batch_size):
                 # batch += 1
                 # end_ind = min(beg_ind+args.batch_size, num_train)
                 # perm_train_idxs = list(train_idx[perm_train[beg_ind: end_ind]])
-                optimizer.zero_grad()
                 # mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
                 # sample_mu = model.reparameterize(mu, logvar)
                 # recovered = model.dc(sample_mu)
@@ -499,9 +498,6 @@ def main():
                 alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-
-                # TODO: change data to pass masked alpha adj 
-
                 alpha_logit = classifier(data["x"].squeeze(0), adj=masked_alpha_adj.squeeze(0))[0]
                 alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
                 # nll_loss, org_logits, alpha_logits, alpha_sparsity, kld_loss, l2_reg = zip(*map(train_task, perm_train_idxs))
@@ -568,12 +564,26 @@ def main():
 
                     l2_reg = weight_decay * l2_reg
                 loss = nll_loss + causal_loss + klloss + size_loss + 0.1 * l2_reg +  args.bayesian_coef * kld_loss
-               
+                print("----------------------LOSS", loss)
+                # for name, param in model.named_parameters():
+                #     if param.requires_grad:
+                #         print(f"{name} - Weights: {param.data}")
+                #         print(f"{name} - Gradients: {param.grad}")
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
+                print("After optimizer step:")
+                # for name, param in model.named_parameters():
+                #     if param.requires_grad:
+                #         print(f"{name} - Weights: {param.data}")
+                #         print(f"{name} - Gradients: {param.grad}")
+
                 train_losses += [[nll_loss, causal_loss, klloss, size_loss, kld_loss]]
+
                 print("losses : ", nll_loss, causal_loss, klloss, size_loss, kld_loss)
+
+
+
                 sys.stdout.flush()
             
             nll_loss, causal_loss, klloss, size_loss, kld_loss = torch.tensor(train_losses).mean(0)
