@@ -4,7 +4,7 @@ import numpy as np
 from itertools import permutations
 from torch_geometric.utils import to_dense_adj
 from torch.nn import functional as F
-from brainGNN.dataset.brain_dataset import dense_to_ind_val
+from brainGNN.dataset.brain_dataset import adj_to_idx_attr, dense_to_ind_val
 from brainGNN.models.gcn import GCN
 from brainGNN.models.mlp import MLP
 from brainGNN.models.gat import GAT
@@ -19,7 +19,10 @@ class BrainNN(torch.nn.Module):
 
     def forward(self, data, adj=None):
         if(adj != None):
-            x, (edge_index, edge_attr), batch = data, dense_to_ind_val(adj), 1
+            # x, (edge_index, edge_attr), batch = data, dense_to_ind_val(adj), 1
+            x = data
+            edge_index, edge_attr = adj_to_idx_attr(adj)
+            batch = 1
         else:
             x, edge_index, edge_attr, batch = data["x"], data["edge_index"], data["edge_attr"], 1
         g = self.gnn(x, edge_index, edge_attr, batch)

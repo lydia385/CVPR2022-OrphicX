@@ -389,6 +389,7 @@ def main():
                 optimizer.step()
                 sys.stdout.flush()
                 train_losses += [[nll_loss.item(), causal_loss.item(), klloss.item(), alpha_sparsity.item(), loss.item()]]
+
             nll_loss, causal_loss, klloss, size_loss, train_loss = np.mean(train_losses, axis=0)
             writer.add_scalar("train/nll", nll_loss, epoch)
             writer.add_scalar("train/causal", causal_loss, epoch)

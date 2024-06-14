@@ -56,9 +56,9 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
 
             else:
                 logits_i = classifier(feat, x_hat_i)[0][:,node_idx,:]
-            logits.append([logits_i[0].item(),logits_i[1].item()])
+            logits.append(logits_i)
             # return
-        logits = torch.as_tensor(logits)
+        logits = torch.stack(logits)
         
     else:
         if node_idx is None:

@@ -20,6 +20,7 @@ import torch
 import random
 import numpy as np
 import pandas as pd
+import torch.types
 import torch_geometric
 from tqdm import tqdm
 import networkx as nx
@@ -168,19 +169,17 @@ def train_val_dataset(dataset, val_split=0.25,test_split=0.25):
     # datasets['test'] = Subset(dataset, test_idx)
     
     return  train_idx, val_idx ,test_idx
+
 def preprocess_graph(adj):
-    #only the non-zero elements are stored along with their row and column indices.
-    adj = sp.coo_matrix(adj)
-    # ensuring each node is connected to itself. This is a common practice to include a node's own features during aggregation
-    adj_ = adj + sp.eye(adj.shape[0])
-    #Calculates the degree of each node + rohom
+    adj_ = adj + np.eye(adj.shape[0])
+    
     rowsum = np.array(adj_.sum(1))
-    #inverse square root of the degree matrix.
-    degree_mat_inv_sqrt = sp.diags(np.power(rowsum, -0.5).flatten())
-    #normlize with An=D^-0.5*A(with self-loop)*D^-0.5
-    adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt).tocoo()
-    #rj3oha
-    return sparse_mx_to_torch_sparse_tensor(adj_normalized)
+    rowsum = np.abs(rowsum)
+    degree_mat_inv_sqrt = np.diag(np.power(rowsum, -0.5).flatten())
+
+    adj_normalized = adj_.dot(degree_mat_inv_sqrt).transpose().dot(degree_mat_inv_sqrt)
+    return torch.from_numpy(adj_normalized).float()
+
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     """Convert a scipy sparse matrix to a torch sparse tensor."""
     sparse_mx = sparse_mx.tocoo().astype(np.float32)
@@ -199,6 +198,7 @@ softmax = torch.nn.Softmax(dim=1)
 ce = torch.nn.CrossEntropyLoss(reduction='mean')
 
 def main():
+
     # Load a model checkpoint
     ckpt = torch.load('ckpt/%s_base_h20_o20.pth.tar'%(args.dataset))
     cg_dict = ckpt["cg"] # get computation graph
@@ -259,7 +259,7 @@ def main():
             for graph_idx in graph_idxs:
                 data = dataset[graph_idx]
                 adj_org = dataset.adj[graph_idx]
-                adj_norm = preprocess_graph(adj_org)
+                adj_norm = preprocess_graph(adj_org.numpy())
                 adj = adj_org.float()
                 label = torch.Tensor(y[graph_idx])
                 feat = data.x.float()
@@ -284,9 +284,9 @@ def main():
                     "n_nodes": n_nodes,
                     "pos_weight": pos_weight.to(device),
                     "norm": norm.to(device),
-                    "edge_index": dataset[graph_idx].edge_index,
-                    "edge_attr": dataset[graph_idx].edge_attr,
-                    "x": dataset[graph_idx].x,
+                    "edge_index": dataset[graph_idx].edge_index.to(device),
+                    "edge_attr": dataset[graph_idx].edge_attr.to(device),
+                    "x": dataset[graph_idx].x.to(device),
                 }]
 
         def __len__(self):
@@ -301,6 +301,7 @@ def main():
     train_idx, val_idx, test_idx = train_val_dataset(dataset)
     train_idx = np.sort(np.array(train_idx))
     train_graphs = GraphSampler(range(len(train_idx)))
+    num_train = len(train_idx)
 
     train_dataset = torch.utils.data.DataLoader(
         train_graphs,
@@ -310,8 +311,8 @@ def main():
         drop_last=True
     )
     
-    data_sample = next(iter(train_dataset))
-    print(f"data sample from train dataloader : {data_sample}")
+    # data_sample = next(iter(train_dataset))
+    # print(f"data sample from train dataloader : {data_sample}")
 
     val_graphs = GraphSampler(val_idx)
     val_dataset = torch.utils.data.DataLoader(
@@ -379,6 +380,7 @@ def main():
                 causal_loss = []
                 beta_info = []
                 
+                # causal loss
                 for idx in random.sample(range(0, data['feat'].shape[0]), args.NX):                 
                     _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
                     _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, brain=True)
@@ -463,12 +465,18 @@ def main():
         model.train()
         start_time = time.time()
         writer = SummaryWriter(comment=args.output)
+        batch = 0
         os.makedirs('explanation/%s' % args.output, exist_ok=True)
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
             model.train()
             train_losses = []
             # for data in train_dataset:
             for batch_idx, data in enumerate(train_dataset):
+            # perm_train = np.random.permutation(num_train)
+            # for beg_ind in range(0, num_train, args.batch_size):
+                # batch += 1
+                # end_ind = min(beg_ind+args.batch_size, num_train)
+                # perm_train_idxs = list(train_idx[perm_train[beg_ind: end_ind]])
                 optimizer.zero_grad()
                 # mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
                 # sample_mu = model.reparameterize(mu, logvar)
@@ -482,6 +490,7 @@ def main():
                             )
                 org_logit = classifier(data)
                 org_probs = F.softmax(org_logit, dim=1)
+                #  ----------------- nll loss vae loss ----------------------------------------
                 if args.coef_lambda:
                     nll_loss = args.coef_lambda * criterion(recovered, mu, logvar, data).mean()
                 else:
@@ -490,8 +499,13 @@ def main():
                 alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
-                alpha_logit = classifier(data)[0]
+
+                # TODO: change data to pass masked alpha adj 
+
+                alpha_logit = classifier(data["x"].squeeze(0), adj=masked_alpha_adj.squeeze(0))[0]
                 alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
+                # nll_loss, org_logits, alpha_logits, alpha_sparsity, kld_loss, l2_reg = zip(*map(train_task, perm_train_idxs))
+                #  --------------------------- causal loss ----------------------------------------
                 if args.coef_causal:
                     causal_loss = []
                     NX = min(data['feat'].shape[0], args.NX)
@@ -511,15 +525,18 @@ def main():
                     causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
                 else:
                     causal_loss = 0
+                #  --------------------------- kll loss ----------------------------------------
                 if args.coef_kl:
                     klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit.unsqueeze(0),dim=1), org_probs, reduction='mean')
                 else:
                     klloss = 0
+                #  --------------------------- sparsity size loss ----------------------------------------
                 if args.coef_size:
                     size_loss = args.coef_size * alpha_sparsity.mean()
                 else:
                     size_loss = 0
 
+                #  --------------------------- dropout loss ----------------------------------------
                 l2_reg = None
                 block_index = 0
                 for layer in range(nlay-1):

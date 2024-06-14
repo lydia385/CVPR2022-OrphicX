@@ -13,6 +13,13 @@ from .abcd.load_abcd import load_data_abcd, load_data_abide, load_data_pnc
 from torch_geometric.data.dataset import files_exist
 import logging
 
+def adj_to_idx_attr(adj):
+    return dense_to_sparse(adj)
+
+def adj_to_idx(adj):
+    edge_index = adj.nonzero().t().contiguous()
+    return edge_index
+
 
 def dense_to_ind_val(adj):
   

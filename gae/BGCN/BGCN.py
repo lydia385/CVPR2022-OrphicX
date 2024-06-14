@@ -231,19 +231,19 @@ class VBGAE(nn.Module):
         self.drpcon_list = []
         self.dropout = dropout
         gcs_list = []
-        self.batch_norm = []
+        # self.batch_norm = []
         idx = 0
         for i in range(nlay-1):
             if i==0:
                 self.drpcon_list.append(BBGDC(1))
                 gcs_list.append([str(idx), BGraphConvolution(nfeat_list[i], nfeat_list[i+1])])
-                self.batch_norm.append(nn.BatchNorm1d(nfeat_list[i+1], device=device))
+                # self.batch_norm.append(nn.BatchNorm1d(nfeat_list[i+1], device=device))
                 idx += 1
             elif (i<(nlay-2)):
                 self.drpcon_list.append(BBGDC(1))
                 for j in range(self.nblock):
                     gcs_list.append([str(idx), BGraphConvolution(int(nfeat_list[i]/self.nblock), nfeat_list[i+1])])
-                    self.batch_norm.append(nn.BatchNorm1d(nfeat_list[i+1], device=device))
+                    # self.batch_norm.append(nn.BatchNorm1d(nfeat_list[i+1], device=device))
                     idx += 1
             else:
                 self.drpcon_list.append(BBGDC(1))
@@ -253,7 +253,7 @@ class VBGAE(nn.Module):
                 idx +=2
 
         
-        self.batch_norm = nn.ModuleList(self.batch_norm)
+        # self.batch_norm = nn.ModuleList(self.batch_norm)
         self.drpcons = nn.ModuleList(self.drpcon_list)
         self.gcs = nn.ModuleDict(gcs_list)
         # feature list is number of features in each layer
@@ -291,7 +291,7 @@ class VBGAE(nn.Module):
                 x = torch.squeeze(x)
                 adj_lay = torch.squeeze(adj_lay)
                 x = F.relu(self.gcs[str(i)](x, adj_lay))
-                x = self.batch_norm[i](x)
+                # x = self.batch_norm[i](x)
                 x = F.dropout(x, self.dropout, training=training)
 
             
@@ -316,10 +316,10 @@ class VBGAE(nn.Module):
                         if j==0:
                             # first block: get the second 
                             x_out = self.gcs[str((i-1)*self.nblock+j+1)](x[:,j*feat_pblock:(j+1)*feat_pblock], adj_lay)
-                            x_out = self.batch_norm[i](x_out)
+                            # x_out = self.batch_norm[i](x_out)
                         else:
                             x_out = x_out + self.gcs[str((i-1)*self.nblock+j+1)](x[:,j*feat_pblock:(j+1)*feat_pblock], adj_lay)
-                            x_out = self.batch_norm[i](x_out)
+                            # x_out = self.batch_norm[i](x_out)
                     else:
                         mu = self.gcs[str((i)*self.nblock)](x[:,0:self.nfeat_list[i]], adj_lay)
                         logvar = self.gcs[str((i+1)*self.nblock)](x[:,0:self.nfeat_list[i]], adj_lay)

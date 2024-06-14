@@ -376,6 +376,7 @@ def main():
                 masked_alpha_adj = alpha_adj * data['sub_adj']
                 alpha_logit = classifier(data['feat'], masked_alpha_adj)[0]
                 alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
+                # -----------------------  loss --------------------------- 
                 if args.coef_causal:
                     causal_loss = []
                     NX = min(data['feat'].shape[0], args.NX)
@@ -396,11 +397,13 @@ def main():
                     causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
                 else:
                     causal_loss = 0
+                # ----------------------- kl loss --------------------------- 
                 if args.coef_kl:
-
                     klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit,dim=1), org_probs, reduction='mean')
                 else:
                     klloss = 0
+
+                # ----------------------- size loss --------------------------- 
                 if args.coef_size:
                     size_loss = args.coef_size * alpha_sparsity.mean()
                 else:
