@@ -196,7 +196,11 @@ def main():
                 pos_weight = float(adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
                 pos_weight = torch.from_numpy(np.array(pos_weight))
                 norm = torch.tensor(adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.sum()) * 2))
-                print("sub label ", label)
+                count = feat
+                print("orphicx norm : ", count)
+                print("count : ", torch.count_nonzero(count))
+                print("count ratio % ", torch.count_nonzero(count) / (count.shape[0] * count.shape[1]))
+
                 self.graph_data += [{
                     "graph_idx": graph_idx,
                     "graph_size": graph_size, 
@@ -365,6 +369,7 @@ def main():
                 mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
                 sample_mu = model.reparameterize(mu, logvar)
                 recovered = model.dc(sample_mu)
+                # print("orphicx mu logvar : ", mu, logvar)
                 org_logit = classifier(data['feat'], data['sub_adj'])[0]
                 org_probs = F.softmax(org_logit, dim=1)
                 if args.coef_lambda:
@@ -376,7 +381,9 @@ def main():
                 alpha_adj = torch.sigmoid(model.dc(alpha_mu))
                 masked_alpha_adj = alpha_adj * data['sub_adj']
                 alpha_logit = classifier(data['feat'], masked_alpha_adj)[0]
+                # print("orphicx masked alpha adj : ", masked_alpha_adj)
                 alpha_sparsity = masked_alpha_adj.mean((1,2))/data['sub_adj'].mean((1,2))
+                # print("orphicx ALPHE LOGITS : ", alpha_logit)
                 # -----------------------  loss --------------------------- 
                 if args.coef_causal:
                     causal_loss = []
@@ -411,11 +418,17 @@ def main():
                     size_loss = 0
 
                 loss = nll_loss + causal_loss + klloss + size_loss
-                print("Losses : ", nll_loss, causal_loss, klloss, size_loss)
+                print(f"loss : {loss}, nll loss : {nll_loss},  causal loss : {causal_loss} klloss : {klloss} siez loss {size_loss}")
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 train_losses += [[nll_loss, causal_loss, klloss, size_loss]]
+                
+                # print("After optimizer step:")
+                # for name, param in model.named_parameters():
+                #     if param.requires_grad:
+                #         print(f"{name} - Weights: {param.data}")
+                #         print(f"{name} - Gradients: {param.grad}")
                 sys.stdout.flush()
             
             # train_loss = (torch.cat(train_losses)).mean().item()

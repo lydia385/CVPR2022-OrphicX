@@ -55,7 +55,7 @@ color_map = ['gray', 'blue', 'purple', 'red', 'brown', 'green', 'orange', 'olive
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='Mutagenicity', help='Name of dataset.')
 parser.add_argument('--output', type=str, default=None, help='output path.')
-parser.add_argument('--lr', type=float, default=0.00001, help='Initial learning rate.')
+parser.add_argument('--lr', type=float, default=0.01, help='Initial learning rate.')
 parser.add_argument('-e', '--epoch', type=int, default=300, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=128, help='Number of samples in a minibatch.')
 parser.add_argument('--seed', type=int, default=42, help='Number of training epochs.')
@@ -220,6 +220,7 @@ def main():
     classifier = build_model(args, device, "gcn",input_dim , nodes_num )
     load_checkpoint(classifier, "ckpt/model_brainGnn.pth" )
     classifier.eval()
+    print("Classifier : ", classifier)
 
     if args.output is None:
         args.output = args.dataset
@@ -242,6 +243,7 @@ def main():
 
 
 
+
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = gaeloss
     label_onehot = torch.eye(100, dtype=torch.float)
@@ -259,30 +261,45 @@ def main():
             for graph_idx in graph_idxs:
                 data = dataset[graph_idx]
                 adj_org = dataset.adj[graph_idx]
-                adj_norm = preprocess_graph(adj_org.numpy())
+                t = torch.Tensor([0.5])  # threshold
+                adj_binary = (adj_org > t).float() * 1
+                # print("adj org ", adj_org)
+            
+                adj_norm = preprocess_graph(adj_binary.numpy())
+                # print("adj norm before softmax : ", adj_norm)
+                # adj_norm = F.softmax(adj_norm, dim=1)
+                # print("adj norm after softmax : ", adj_norm)
                 adj = adj_org.float()
                 label = torch.Tensor([y[graph_idx]])
                 feat = data.x.float()
+                feat = torch.absolute(feat)
+                feat = (feat > t).float() * 1
                 G = graph_labeling(nx.from_numpy_array(adj_org.numpy()))
                 graph_label = np.array([G.nodes[node]['string'] for node in G])
                 graph_label_onehot = label_onehot[graph_label]
                 sub_feat = torch.cat((feat, graph_label_onehot), dim=1)
-                adj_label = adj + np.eye(adj.shape[0])
+                adj_label = adj_binary + np.eye(adj.shape[0])
                 n_nodes = adj.shape[0]
                 graph_size = torch.count_nonzero(adj.sum(-1))
-                pos_weight = float(adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum()
+                pos_weight = float(adj.shape[0] * adj.shape[0] - adj_norm.sum()) / adj_norm.sum()
                 pos_weight = torch.from_numpy(np.array(pos_weight))
-                norm = torch.tensor(adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.sum()) * 2))
+                norm = torch.tensor(adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj_norm.sum()) * 2))
+                # count =  feat
+                # print("lyax norm ", count)
+                # print("count : ", torch.count_nonzero(count))
+                # print("count ratio % ", torch.count_nonzero(count) / (count.shape[0] * count.shape[1]))
                 self.graph_data += [{
                     "graph_idx": graph_idx,
                     "graph_size": graph_size, 
+                    # our sub adj doesn't contain 0 and 1 like orphicx 
                     "sub_adj": adj_norm.to(device), 
+                    #  maybe fix threshold --> max it chwi
                     "feat": feat.to(device).float(), 
                     "sub_feat": sub_feat.to(device).float(), 
                     "sub_label": label.squeeze(0).to(device).float(), 
                     "adj_label": adj_label.to(device).float(),
                     "n_nodes": n_nodes,
-                    "pos_weight": pos_weight.to(device),
+                    "pos_weight": pos_weight.to(device).float(),
                     "norm": norm.to(device),
                     "edge_index": dataset[graph_idx].edge_index.to(device),
                     "edge_attr": dataset[graph_idx].edge_attr.to(device),
@@ -329,7 +346,7 @@ def main():
         num_workers=0,
     )
         #VBGAE
-    nfeat_list = [input_dim + 100, 32, 16, 8, 8]
+    nfeat_list = [input_dim, 32, 16, 8, 8]
     nlay = 4
     nblock = 1
     dropout = 0
@@ -351,7 +368,7 @@ def main():
                 labels = data["sub_label"]
                 # recovered, mu, logvar = model(data['sub_feat'], data['sub_adj'])
                 recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
-                            x=data['sub_feat'],
+                            x=data['x'],
                             adj_normt=data['sub_adj'],
                             warm_up=wup, 
                             training=True,
@@ -481,12 +498,14 @@ def main():
                 # sample_mu = model.reparameterize(mu, logvar)
                 # recovered = model.dc(sample_mu)
                 recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
-                            x=data['sub_feat'],
+                            x=data['feat'],
                             adj_normt=data['sub_adj'],
                             warm_up=wup, training=True,
                             mul_type=mul_type,
                             graph_size=data["n_nodes"],
                             )
+                # print("LYAX mu :",mu)
+                # print("LYAX logvar :",logvar)
                 org_logit = classifier(data)
                 org_probs = F.softmax(org_logit, dim=1)
                 #  ----------------- nll loss vae loss ----------------------------------------
@@ -523,6 +542,8 @@ def main():
                     causal_loss = 0
                 #  --------------------------- kll loss ----------------------------------------
                 if args.coef_kl:
+                    # print("lyax Masked ALPHE ADJ : ", masked_alpha_adj)
+                    # print("orphicx ALPHE LOGITS : ", alpha_logit)
                     klloss = args.coef_kl * F.kl_div(F.log_softmax(alpha_logit.unsqueeze(0),dim=1), org_probs, reduction='mean')
                 else:
                     klloss = 0
@@ -564,7 +585,9 @@ def main():
 
                     l2_reg = weight_decay * l2_reg
                 loss = nll_loss + causal_loss + klloss + size_loss + 0.1 * l2_reg +  args.bayesian_coef * kld_loss
-                print("----------------------LOSS", loss)
+
+                # print(f"loss : {loss}, nll loss : {nll_loss},  causal loss : {causal_loss} klloss : {klloss} siez loss {size_loss}, l2 reg : {l2_reg}, kld loss : {kld_loss}")
+                print(f"loss : {loss}, nll loss : {nll_loss},  causal loss : {causal_loss} klloss : {klloss} siez loss {size_loss}")
                 # for name, param in model.named_parameters():
                 #     if param.requires_grad:
                 #         print(f"{name} - Weights: {param.data}")
@@ -572,7 +595,7 @@ def main():
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
-                print("After optimizer step:")
+                # print("After optimizer step:")
                 # for name, param in model.named_parameters():
                 #     if param.requires_grad:
                 #         print(f"{name} - Weights: {param.data}")
@@ -580,7 +603,6 @@ def main():
 
                 train_losses += [[nll_loss, causal_loss, klloss, size_loss, kld_loss]]
 
-                print("losses : ", nll_loss, causal_loss, klloss, size_loss, kld_loss)
 
 
 
@@ -622,7 +644,7 @@ def main():
             # labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
 
             labels = data["sub_label"]
-            mu, logvar = model.encode(data['sub_feat'], data['sub_adj'])
+            mu, logvar = model.encode(data['x'], data['sub_adj'])
             org_logits = classifier(data)[0]
             org_probs = F.softmax(org_logits.unsqueeze(0), dim=1)
             pred_labels = torch.argmax(org_probs,axis=1)
