@@ -95,6 +95,6 @@ class InnerProductDecoderMLP(nn.Module):
 
 
 class VBGAEMLP(VBGAE):
-    def __init__(self, nfeat_list, dropout, nlay, nblock, num_edges, decoder_hidden_dim1, decoder_hidden_dim2):
-        super(VBGAEMLP, self).__init__(nfeat_list, dropout, nlay, nblock, num_edges)
+    def __init__(self, nfeat_list, dropout, nlay, nblock, num_edges, decoder_hidden_dim1, decoder_hidden_dim2, device='cpu'):
+        super(VBGAEMLP, self).__init__(nfeat_list, dropout, nlay, nblock, num_edges, device=device)
         self.dc = InnerProductDecoderMLP(nfeat_list[-1], decoder_hidden_dim1, decoder_hidden_dim2, dropout, act=lambda x: x)

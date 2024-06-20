@@ -223,6 +223,7 @@ class VBGAE(nn.Module):
         super(VBGAE, self).__init__()
         
         # assert len(nfeat_list)==nlay+1
+        self.device = device
         self.nlay=nlay
         self.dc = dc
         self.nblock = nblock
@@ -279,7 +280,7 @@ class VBGAE(nn.Module):
             # start by first layer: it has a special treatment 
             if i==0:
                 # cut mast matrix to the number of edges and reshape it based on Num_nodes X Num_nodes aka adj matrix
-                mask_mat = torch.reshape(mask_vec[:num_edges], (num_nodes, num_nodes)).cpu()
+                mask_mat = torch.reshape(mask_vec[:num_edges], (num_nodes, num_nodes)).to(self.device)
                 if mul_type=='norm_sec':
                     # multiply adj by mask add self loop then normalize
                     adj_lay = normalize_torch(torch.mul(mask_mat, adj) + torch.eye(adj.shape[0]).cpu())
@@ -287,7 +288,7 @@ class VBGAE(nn.Module):
                     # normalize adj matr multiply adj by mask
          
                     
-                    adj_lay = torch.mul(mask_mat, adj_normt).cpu()
+                    adj_lay = torch.mul(mask_mat, adj_normt).to(self.device)
                 x = torch.squeeze(x)
                 adj_lay = torch.squeeze(adj_lay)
                 x = F.relu(self.gcs[str(i)](x, adj_lay))
@@ -302,13 +303,13 @@ class VBGAE(nn.Module):
                     # Reshape the appropriate segment of the mask vector to form a mask matrix
                     # for the current block, matching the adjacency matrix dimensions
                     mask_mat = torch.reshape(mask_vec[j*num_edges:(j+1)*num_edges]
-                                             , (num_nodes, num_nodes)).cpu()
+                                             , (num_nodes, num_nodes)).to(self.device)
                      
                     # same as layer 1
                     if mul_type=='norm_sec':
-                        adj_lay = normalize_torch(torch.mul(mask_mat, adj) + torch.eye(adj.shape[0]).cpu())
+                        adj_lay = normalize_torch(torch.mul(mask_mat, adj) + torch.eye(adj.shape[0]).to(self.device))
                     elif mul_type=='norm_first':
-                        adj_lay = torch.mul(mask_mat, adj_normt).cpu()
+                        adj_lay = torch.mul(mask_mat, adj_normt).to(self.device)
                     x = torch.squeeze(x)
                     adj_lay = torch.squeeze(adj_lay)                
                     # if we are not in last layer : (last 2 layers are for output)

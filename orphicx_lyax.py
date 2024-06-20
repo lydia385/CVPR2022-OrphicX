@@ -347,7 +347,7 @@ def main():
 
     
     model = VBGAEMLP(
-        nfeat_list, dropout, nlay, nblock, num_edges, nfeat_list[-1], nfeat_list[-1]
+        nfeat_list, dropout, nlay, nblock, num_edges, nfeat_list[-1], nfeat_list[-1], device=device
     ).to(device)
 
     print("_"*50, "Model Summary", "_"*50)
