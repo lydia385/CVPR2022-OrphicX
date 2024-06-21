@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import argparse
 import scipy.sparse as sp
 from tensorboardX import SummaryWriter
-
+import wandb
 import causaleffect
 from gae.model import VBGAEMLP, VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
@@ -291,6 +291,31 @@ def main():
             writer.add_scalar("%s/acc(Y_beta, labels)"%prefix, beta_gt_acc, epoch)
             writer.add_scalar("%s/acc(Y_alpha, Y_org)"%prefix, alpha_pred_acc, epoch)
             writer.add_scalar("%s/acc(Y_beta, Y_org)"%prefix, beta_pred_acc, epoch)
+
+
+            experiment.log({
+                'val total loss': loss.item(),
+                'nll loss elbo': nll_loss.item(),
+                'val causal loss': causal_loss.item(),
+                'val kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
+                'val sparsity': size_loss,
+                'val bayesian loss': kld_loss.item(),
+                'val l2 reg drop rate': l2_reg.item(),
+                "alpha_info_flow": alpha_info,
+                "beta_info_flow": beta_info,
+                "acc(Y_rec, Y_org)":org_acc,
+                "acc(Y_rec, labels)":pred_acc,
+                "kld(Y_rec, Y_org)":kl_pred_org,
+                "kld(Y_alpha, Y_org)":alpha_kld,
+                "kld(Y_beta, Y_org)":beta_kld,
+                "alpha_sparsity" : alpha_sparsity,
+                "acc(Y_alpha, labels)":alpha_gt_acc,
+                "acc(Y_beta, labels)":beta_gt_acc,
+                "acc(Y_alpha, Y_org)":alpha_pred_acc,
+                "acc(Y_beta, Y_org)":beta_pred_acc,
+                'epoch': epoch,
+            })
+
         return loss.item()
 
     def save_checkpoint(filename):
@@ -367,7 +392,6 @@ def main():
         # mu, logvar = model.encode(data['sub_feat'], data['adj_norm'])
         # sample_mu = model.reparameterize(mu, logvar)
         # recovered = model.dc(sample_mu)
-        adj_norm = preprocess_graph(adj)
 
         recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
                             x=data['sub_feat'],
@@ -425,7 +449,7 @@ def main():
     if args.load_ckpt:
         ckpt_path = args.load_ckpt
     else:
-        ckpt_path = os.path.join('explanation', args.output, 'model.ckpt')
+        ckpt_path = os.path.join(args.output, 'model.ckpt')
 
     if os.path.exists(ckpt_path) and not args.retrain:
         print("Load checkpoint from {}".format(ckpt_path))
@@ -440,6 +464,11 @@ def main():
         patient = args.patient
         best_loss = 100
         model.train()
+        experiment = wandb.init(project='lyax-node', resume=False, anonymous='must')
+        experiment.config.update(
+            dict(epochs=args.epoch, batch_size=args.batch_size, learning_rate=lr)
+        )
+
         writer = SummaryWriter(comment=args.output)
         start_time = time.time()
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
@@ -492,11 +521,21 @@ def main():
             writer.add_scalar("train/BGCN loss", kld_loss, epoch)
             writer.add_scalar("train/l2 reg drop rate", l2_reg, epoch)
             val_loss = eval_model(val_idxs,'val')
+            experiment.log({
+                'total loss': train_loss.item(),
+                'loss elbo': nll_loss.item(),
+                'causal loss': causal_loss.item(),
+                'kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
+                'sparsity': size_loss,
+                'bayesian loss': kld_loss.item(),
+                'l2 reg drop rate': l2_reg.item(),
+                'epoch': epoch
+            })
             patient -= 1
             if val_loss < best_loss:
                 best_loss = val_loss
                 patient = 100
-                save_checkpoint('explanation/%s/model.ckpt' % args.output)
+                save_checkpoint(args.output)
                 eval_model(test_idxs,'test')
             elif patient <= 0:
                 print("Early stop.")
@@ -504,7 +543,7 @@ def main():
         print("Train time:", time.time() - start_time)
         writer.close()
         # Load checkpoint with lowest val loss
-        checkpoint = torch.load('explanation/%s/model.ckpt' % args.output)
+        checkpoint = torch.load(args.output)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
     
@@ -548,7 +587,7 @@ def main():
                 }]
     columns = results[0].keys()
     df = pd.DataFrame(results, columns = columns)
-    df.to_csv(os.path.join('explanation', args.output, 'results.csv'))
+    df.to_csv(os.path.join(args.output, 'results.csv'))
     print(df.groupby('topk').mean())
 
     if args.plot_info_flow:
@@ -577,7 +616,7 @@ def main():
                 }]
         columns = info_flow[0].keys()
         df = pd.DataFrame(info_flow, columns = columns)
-        df.to_csv(os.path.join('explanation', args.output, 'info_flow.csv'))
+        df.to_csv(os.path.join(args.output, 'info_flow.csv'))
         import matplotlib
         import matplotlib.pyplot as plt
         import seaborn as sns
