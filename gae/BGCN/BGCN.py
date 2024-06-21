@@ -84,7 +84,7 @@ class BBGDC(nn.Module):
         a, b = self.get_params()
         u = torch.rand(self.num_pars).clamp(1e-6, 1-1e-6)
         if torch.cuda.is_available():
-            u = u.cpu()
+            u = u.cuda()
         return (1 - u.pow_(1./b)).pow_(1./a)
     
     def get_weight(self, num_samps, training, samp_type='rel_ber'):

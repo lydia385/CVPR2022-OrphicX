@@ -332,8 +332,8 @@ def main():
 
 
     # feat dim = 14
-    nfeat_list = [feat_dim, 32, 16, 8, 8]
-    nlay = 4
+    nfeat_list = [feat_dim, 64, 32, 16, 8, 8]
+    nlay = 5
     nblock = 1
     # num_edges = int(adj.nnz/2)
     first_node_idx, first_data = next(iter(dataset.items()))
