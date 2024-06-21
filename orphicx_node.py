@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import argparse
 import scipy.sparse as sp
 from tensorboardX import SummaryWriter
+import wandb
 
 import causaleffect
 from gae.model import VGAE3MLP
@@ -267,6 +268,26 @@ def main():
             writer.add_scalar("%s/acc(Y_beta, labels)"%prefix, beta_gt_acc, epoch)
             writer.add_scalar("%s/acc(Y_alpha, Y_org)"%prefix, alpha_pred_acc, epoch)
             writer.add_scalar("%s/acc(Y_beta, Y_org)"%prefix, beta_pred_acc, epoch)
+            experiment.log({
+                'val total loss': loss.item(),
+                'nll loss elbo': nll_loss.item(),
+                'val causal loss': causal_loss.item(),
+                'val kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
+                'val sparsity': size_loss,
+                "alpha_info_flow": alpha_info,
+                "beta_info_flow": beta_info,
+                "acc(Y_rec, Y_org)":org_acc,
+                "acc(Y_rec, labels)": pred_acc,
+                "kld(Y_rec, Y_org)": kl_pred_org,
+                "kld(Y_alpha, Y_org)": alpha_kld,
+                "kld(Y_beta, Y_org)":beta_kld,
+                "alpha_sparsity" : alpha_sparsity,
+                "acc(Y_alpha, labels)":alpha_gt_acc,
+                "acc(Y_beta, labels)":beta_gt_acc,
+                "acc(Y_alpha, Y_org)":alpha_pred_acc,
+                "acc(Y_beta, Y_org)":beta_pred_acc,
+                'epoch': epoch,
+            })
         return loss.item()
 
     def save_checkpoint(filename):
@@ -349,6 +370,10 @@ def main():
         patient = args.patient
         best_loss = 100
         model.train()
+        experiment = wandb.init(project='lyax-node', resume=False, anonymous='must')
+        experiment.config.update(
+            dict(epochs=args.epoch, batch_size=args.batch_size, learning_rate=args.lr)
+        )
         writer = SummaryWriter(comment=args.output)
         start_time = time.time()
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
@@ -397,7 +422,17 @@ def main():
             writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
             writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
             writer.add_scalar("train/total_loss", train_loss, epoch)
+            experiment.log({
+                'total loss': train_loss.item(),
+                'loss elbo': nll_loss.item(),
+                'causal loss': causal_loss.item(),
+                'kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
+                'sparsity': size_loss,
+            })
+
+
             val_loss = eval_model(val_idxs,'val')
+
             patient -= 1
             if val_loss < best_loss:
                 best_loss = val_loss
