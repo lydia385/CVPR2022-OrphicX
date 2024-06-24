@@ -256,6 +256,8 @@ class VBGAE(nn.Module):
         
         # self.batch_norm = nn.ModuleList(self.batch_norm)
         self.drpcons = nn.ModuleList(self.drpcon_list)
+        print("list gcs",len(gcs_list))
+
         self.gcs = nn.ModuleDict(gcs_list)
         # feature list is number of features in each layer
         self.nfeat_list = nfeat_list
@@ -322,9 +324,8 @@ class VBGAE(nn.Module):
                             x_out = x_out + self.gcs[str((i-1)*self.nblock+j+1)](x[:,j*feat_pblock:(j+1)*feat_pblock], adj_lay)
                             # x_out = self.batch_norm[i](x_out)
                     else:
-                        mu = self.gcs[str((i)*self.nblock)](x[:,0:self.nfeat_list[i]], adj_lay)
-                        logvar = self.gcs[str((i+1)*self.nblock)](x[:,0:self.nfeat_list[i]], adj_lay)
-
+                        mu = self.gcs[str((i-1)*self.nblock+1)](x[:,0:self.nfeat_list[i]], adj_lay)
+                        logvar = self.gcs[str((i)*self.nblock)](x[:,0:self.nfeat_list[i]], adj_lay)
                         mu = F.dropout(F.relu(mu), self.dropout, training=training)
                         logvar = F.dropout(F.relu(logvar), self.dropout, training=training)
                 #print(i,self.nlay-1)
