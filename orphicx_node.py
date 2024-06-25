@@ -253,6 +253,7 @@ def main():
                 args.coef_causal * causal_loss + \
                 args.coef_kl * klloss + \
                 args.coef_size * alpha_sparsity
+
             writer.add_scalar("%s/total_loss"%prefix, loss, epoch)
             writer.add_scalar("%s/nll"%prefix, nll_loss, epoch)
             writer.add_scalar("%s/causal"%prefix, causal_loss, epoch)
@@ -268,6 +269,7 @@ def main():
             writer.add_scalar("%s/acc(Y_beta, labels)"%prefix, beta_gt_acc, epoch)
             writer.add_scalar("%s/acc(Y_alpha, Y_org)"%prefix, alpha_pred_acc, epoch)
             writer.add_scalar("%s/acc(Y_beta, Y_org)"%prefix, beta_pred_acc, epoch)
+
             experiment.log({
                 'val total loss': loss.item(),
                 'nll loss elbo': nll_loss.item(),
@@ -288,6 +290,7 @@ def main():
                 "acc(Y_beta, Y_org)":beta_pred_acc,
                 'epoch': epoch,
             })
+            
         return loss.item()
 
     def save_checkpoint(filename):

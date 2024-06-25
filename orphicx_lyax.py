@@ -19,6 +19,7 @@ import causaleffect
 from gae.model import VBGAEMLP, VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
 
+import wandb
 sys.path.append('gnnexp')
 import models
 import utils.io_utils as io_utils
@@ -160,8 +161,6 @@ def main():
 
     label_onehot = torch.eye(400, dtype=torch.float)
     def extract_neighborhood(node_idx):
-        """Returns the neighborhood of a given ndoe."""
-        
         
         mapping, edge_idxs, node_idx_new, edge_mask = torch_geometric.utils.k_hop_subgraph(int(node_idx), args.n_hops, tg_G.edge_index, relabel_nodes=True)
         node_idx_new = node_idx_new.item()
@@ -244,6 +243,18 @@ def main():
                 _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, dataset[idx]['sub_adj'], dataset[idx]['feat'], node_idx=dataset[idx]['node_idx_new'], act=torch.sigmoid, device=device)
                 causal_loss += [_causal_loss]
                 beta_info += [_beta_info]
+# pred_acc     : recovered_logits, labels
+# kl_pred_org  : recovered_logits, org_probs
+# org_acc      : recovered_logits, org_probs
+# alpha_gt_acc : alpha_logits, labels
+# klloss       : alpha_logits, org_probs
+# alpha_kld    : alpha_logits, org_probs
+
+# recovered_probs    : recovered_logits
+# recovered_log_probs: recovered_logits 
+# recovered_logits alpha_logits 
+
+# org_probs 
             nll_loss = torch.stack(nll_loss).mean()
             causal_loss = torch.stack(causal_loss).mean()
             alpha_info = causal_loss
@@ -291,6 +302,34 @@ def main():
             writer.add_scalar("%s/acc(Y_alpha, Y_org)"%prefix, alpha_pred_acc, epoch)
             writer.add_scalar("%s/acc(Y_beta, Y_org)"%prefix, beta_pred_acc, epoch)
 
+
+            experiment.log({
+                'val total loss': loss.item(),
+                'nll loss elbo': nll_loss.item(),
+                'val causal loss': causal_loss.item(),
+                'val sparsity': size_loss,
+                'val bayesian loss': kld_loss.item(),
+                'val l2 reg drop rate': l2_reg.item(),
+                "alpha_info_flow": alpha_info,
+                "beta_info_flow": beta_info,
+                "kld(Y_beta, Y_org)":beta_kld,
+                "alpha_sparsity" : alpha_sparsity,
+                "acc(Y_beta, labels)":beta_gt_acc,
+                "acc(Y_alpha, Y_org)":alpha_pred_acc,
+                "acc(Y_beta, Y_org)":beta_pred_acc,
+
+                'val kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
+
+                "acc(Y_rec, labels)": pred_acc,
+                "kld(Y_rec, Y_org)": kl_pred_org,
+
+                "acc(Y_rec, Y_org)":org_acc,
+                "kld(Y_alpha, Y_org)": alpha_kld,
+
+                "acc(Y_alpha, labels)":alpha_gt_acc,
+                'epoch': epoch,
+            })
+
         return loss.item()
 
     def save_checkpoint(filename):
@@ -300,16 +339,6 @@ def main():
             'epoch': epoch
         }, filename)
 
-    feat_dim = features.shape[-1]
-    # hop feature
-    feat_dim += args.n_hops + 1
-    if args.graph_labelling:
-        feat_dim += label_onehot.shape[-1]
-    model = VGAE3MLP(
-        feat_dim, args.encoder_hidden1, args.encoder_hidden1,
-        args.encoder_output, args.decoder_hidden1, args.decoder_hidden2,
-        args.K, args.dropout
-    ).to(device)
 
     num_nodes = label.shape[0]
     train_idxs = np.array(cg_dict['train_idx'])
@@ -332,6 +361,13 @@ def main():
 
 
     # feat dim = 14
+    feat_dim = features.shape[-1]
+    # hop feature
+    feat_dim += args.n_hops + 1
+    if args.graph_labelling:
+        feat_dim += label_onehot.shape[-1]
+
+
     nfeat_list = [feat_dim, 64, 32, 16, 8, 8]
     nlay = 5
     nblock = 2
@@ -368,13 +404,14 @@ def main():
         # sample_mu = model.reparameterize(mu, logvar)
         # recovered = model.dc(sample_mu)
 
-        recovered, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
+        _, sample_mu, mu, logvar, kld_loss, drop_rates  = model(
                             x=data['sub_feat'],
                             adj_normt=data['adj_norm'],
                             warm_up=wup, training=True,
                             mul_type=mul_type,
                             graph_size=data["graph_size"]
                             )
+        recovered = model.dc(sample_mu)
         nll_loss = criterion(recovered, mu, logvar, data).mean()
         org_logits = classifier(data['feat'], data['sub_adj'])[0][0, data['node_idx_new']]
         alpha_mu = torch.zeros_like(mu)
@@ -439,10 +476,10 @@ def main():
         patient = args.patient
         best_loss = 100
         model.train()
-        # experiment = wandb.init(project='lyax-node', resume=False, anonymous='must')
-        # experiment.config.update(
-        #     dict(epochs=args.epoch, batch_size=args.batch_size, learning_rate=lr)
-        # )
+        experiment = wandb.init(project='lyax-node', resume=False, anonymous='must')
+        experiment.config.update(
+            dict(epochs=args.epoch, batch_size=args.batch_size, learning_rate=lr)
+        )
 
         writer = SummaryWriter(comment=args.output)
         start_time = time.time()
@@ -496,6 +533,14 @@ def main():
             writer.add_scalar("train/total_loss", train_loss, epoch)
             writer.add_scalar("train/BGCN loss", kld_loss, epoch)
             writer.add_scalar("train/l2 reg drop rate", l2_reg, epoch)
+
+            experiment.log({
+                'total loss': train_loss.item(),
+                'loss elbo': nll_loss.item(),
+                'causal loss': causal_loss.item(),
+                'kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
+                'sparsity': size_loss,
+            })
             val_loss = eval_model(val_idxs,'val')
             patient -= 1
             if val_loss < best_loss:
