@@ -197,9 +197,6 @@ def main():
                 pos_weight = torch.from_numpy(np.array(pos_weight))
                 norm = torch.tensor(adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.sum()) * 2))
                 count = feat
-                print("orphicx norm : ", count)
-                print("count : ", torch.count_nonzero(count))
-                print("count ratio % ", torch.count_nonzero(count) / (count.shape[0] * count.shape[1]))
 
                 self.graph_data += [{
                     "graph_idx": graph_idx,
@@ -275,8 +272,8 @@ def main():
                 causal_loss = []
                 beta_info = []
                 
-                for idx in random.sample(range(0, data['feat'].shape[0]), args.NX):                 
-                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
+                for idx in random.sample(range(0, data['feat'].shape[0]), args.NX):    
+                    _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, labels=labels ,  device=device)
                     _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
                     causal_loss += [_causal_loss]
                     beta_info += [_beta_info]
@@ -389,9 +386,10 @@ def main():
                     causal_loss = []
                     NX = min(data['feat'].shape[0], args.NX)
                     NA = min(data['feat'].shape[0], args.NA)
-            
+                
+                    labels = cg_dict['label'][data['graph_idx'].long()].long().to(device)
                     for idx in random.sample(range(0, data['feat'].shape[0]), NX):
-                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device)
+                        _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, data['sub_adj'][idx], data['feat'][idx], act=torch.sigmoid, device=device, labels=labels)
                         causal_loss += [_causal_loss]
                         for A_idx in random.sample(range(0, data['feat'].shape[0]), NA-1):
                             if args.node_perm:
@@ -400,7 +398,7 @@ def main():
                                 perm_adj[:data['graph_size'][idx]] = perm_adj[perm]
                             else:
                                 perm_adj = data['sub_adj'][A_idx]
-                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid, device=device)
+                            _causal_loss, _ = causaleffect.joint_uncond(ceparams, model.dc, classifier, perm_adj, data['feat'][idx], act=torch.sigmoid,labels=labels, device=device)
                             causal_loss += [_causal_loss]
                     causal_loss = args.coef_causal * torch.stack(causal_loss).mean()
                 else:

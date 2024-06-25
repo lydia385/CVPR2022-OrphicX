@@ -29,9 +29,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--encoder_hidden1', type=int, default=32, help='Number of units in hidden layer 1.')
 parser.add_argument('--encoder_hidden2', type=int, default=16, help='Number of units in hidden layer 2.')
-parser.add_argument('--encoder_output', type=int, default=8, help='Dim of output of VGAE encoder.')
-parser.add_argument('--decoder_hidden1', type=int, default=8, help='Number of units in decoder hidden layer 1.')
-parser.add_argument('--decoder_hidden2', type=int, default=8, help='Number of units in decoder  hidden layer 2.')
+parser.add_argument('--encoder_output', type=int, default=16, help='Dim of output of VGAE encoder.')
+parser.add_argument('--decoder_hidden1', type=int, default=16, help='Number of units in decoder hidden layer 1.')
+parser.add_argument('--decoder_hidden2', type=int, default=16, help='Number of units in decoder  hidden layer 2.')
 parser.add_argument('--n_hops', type=int, default=3, help='Number of hops.')
 parser.add_argument('-e', '--epoch', type=int, default=100, help='Number of training epochs.')
 parser.add_argument('-b', '--batch_size', type=int, default=32, help='Number of samples in a minibatch.')
@@ -243,18 +243,18 @@ def main():
                 _beta_info, _ = causaleffect.beta_info_flow(ceparams, model.dc, classifier, dataset[idx]['sub_adj'], dataset[idx]['feat'], node_idx=dataset[idx]['node_idx_new'], act=torch.sigmoid, device=device)
                 causal_loss += [_causal_loss]
                 beta_info += [_beta_info]
-# pred_acc     : recovered_logits, labels
-# kl_pred_org  : recovered_logits, org_probs
-# org_acc      : recovered_logits, org_probs
-# alpha_gt_acc : alpha_logits, labels
-# klloss       : alpha_logits, org_probs
-# alpha_kld    : alpha_logits, org_probs
+            # pred_acc     : recovered_logits, labels
+            # kl_pred_org  : recovered_logits, org_probs
+            # org_acc      : recovered_logits, org_probs
+            # alpha_gt_acc : alpha_logits, labels
+            # klloss       : alpha_logits, org_probs
+            # alpha_kld    : alpha_logits, org_probs
 
-# recovered_probs    : recovered_logits
-# recovered_log_probs: recovered_logits 
-# recovered_logits alpha_logits 
+            # recovered_probs    : recovered_logits
+            # recovered_log_probs: recovered_logits 
+            # recovered_logits alpha_logits 
 
-# org_probs 
+            # org_probs 
             nll_loss = torch.stack(nll_loss).mean()
             causal_loss = torch.stack(causal_loss).mean()
             alpha_info = causal_loss
@@ -368,9 +368,9 @@ def main():
         feat_dim += label_onehot.shape[-1]
 
 
-    nfeat_list = [feat_dim, 64, 32, 16, 8, 8]
-    nlay = 5
-    nblock = 2
+    nfeat_list = [feat_dim, 128,64, 32, 16, 16 ]
+    nlay = 6
+    nblock = 1
     # num_edges = int(adj.nnz/2)
     first_node_idx, first_data = next(iter(dataset.items()))
     # print(first_data['adj_norm'].shape)
@@ -455,7 +455,7 @@ def main():
             l2_reg = weight_decay * l2_reg
         return nll_loss, org_logits, alpha_logits, alpha_sparsity, kld_loss, l2_reg
 
-    os.makedirs('explanation/%s' % args.output, exist_ok=True)
+    os.makedirs(args.output, exist_ok=True)
 
 
     if args.load_ckpt:
@@ -525,7 +525,6 @@ def main():
                 sys.stdout.flush()
                 train_losses += [[nll_loss.item(), causal_loss.item(), klloss.item(), alpha_sparsity.item(), kld_loss.item(), l2_reg.item(), loss.item()]]
             nll_loss, causal_loss, klloss, size_loss, kdl_loss, l2_reg, train_loss = np.mean(train_losses, axis=0)
-            print(nll_loss, causal_loss, klloss, size_loss, kdl_loss, l2_reg, train_loss)
             writer.add_scalar("train/nll", nll_loss, epoch)
             writer.add_scalar("train/causal", causal_loss, epoch)
             writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
@@ -546,7 +545,7 @@ def main():
             if val_loss < best_loss:
                 best_loss = val_loss
                 patient = 100
-                save_checkpoint(args.output)
+                save_checkpoint(args.output + "/model.ckpt")
                 eval_model(test_idxs,'test')
             elif patient <= 0:
                 print("Early stop.")
@@ -570,7 +569,7 @@ def main():
             _, _, mu, _, _, _  = model(
                             x=data['sub_feat'],
                             adj_normt=data['adj_norm'],
-                            warm_up=wup, training=False,
+                            warm_up=1, training=False,
                             mul_type=mul_type,
                             graph_size=data["graph_size"]
                             )

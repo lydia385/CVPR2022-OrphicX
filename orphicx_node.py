@@ -22,6 +22,7 @@ from gae.model import VGAE3MLP
 from gae.optimizer import loss_function as gae_loss
 
 sys.path.append('gnnexp')
+from gae.renyi import calculate_conditional_MI
 import models
 import utils.io_utils as io_utils
 import utils.parser_utils as parser_utils
@@ -343,7 +344,7 @@ def main():
         nll_loss = criterion(recovered, mu, logvar, data).mean()
         org_logits = classifier(data['feat'], data['sub_adj'])[0][0, data['node_idx_new']]
         alpha_mu = torch.zeros_like(mu)
-        alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]
+        alpha_mu[:,:,:args.K] = sample_mu[:,:,:args.K]   
         alpha_adj = torch.sigmoid(model.dc(alpha_mu))
         alpha_size = (alpha_adj*data['sub_adj']).sum()
         org_size = data['sub_adj'].sum()
@@ -373,10 +374,10 @@ def main():
         patient = args.patient
         best_loss = 100
         model.train()
-        experiment = wandb.init(project='lyax-node', resume=False, anonymous='must')
-        experiment.config.update(
-            dict(epochs=args.epoch, batch_size=args.batch_size, learning_rate=args.lr)
-        )
+        # experiment = wandb.init(project='lyax-node', resume=False, anonymous='must')
+        # experiment.config.update(
+        #     dict(epochs=args.epoch, batch_size=args.batch_size, learning_rate=args.lr)
+        # )
         writer = SummaryWriter(comment=args.output)
         start_time = time.time()
         for epoch in tqdm(range(start_epoch, args.epoch+1)):
@@ -389,29 +390,34 @@ def main():
                 perm_train_idxs = list(train_idxs[perm[beg_ind: end_ind]])
                 optimizer.zero_grad()
                 nll_loss, org_logits, alpha_logits, alpha_sparsity = zip(*map(train_task, perm_train_idxs))
+                
                 causal_loss = []
                 for idx in random.sample(perm_train_idxs, args.NX):
-                    _causal_loss, _ = causaleffect.joint_uncond(ceparams,
+                    # beta_mu = sample_mu[:,args.K:]
+                    # fairness = calculate_conditional_MI(alpha, labels, beta) 
+                    print(idx)
+                    _causal_loss, fairness = causaleffect.joint_uncond(ceparams,
                                                                 model.dc, 
                                                                 classifier, 
                                                                 dataset[idx]['sub_adj'],
                                                                 dataset[idx]['feat'], 
                                                                 node_idx=dataset[idx]['node_idx_new'],
                                                                 act=torch.sigmoid, 
-                                                                device=device
+                                                                device=device,
                                                             )
                     causal_loss += [_causal_loss]
                 nll_loss = torch.stack(nll_loss).mean()
+                org_logits = torch.stack(org_logits)
                 causal_loss = torch.stack(causal_loss).mean()
                 alpha_logits = torch.stack(alpha_logits)
-                org_logits = torch.stack(org_logits)
                 org_probs = F.softmax(org_logits, dim=1)
                 klloss = F.kl_div(F.log_softmax(alpha_logits, dim=1), org_probs, reduction='mean')
                 alpha_sparsity = torch.stack(alpha_sparsity).mean()
                 loss = args.coef_lambda * nll_loss + \
                     args.coef_causal * causal_loss + \
                     args.coef_kl * klloss + \
-                    args.coef_size * alpha_sparsity
+                    args.coef_size * alpha_sparsity + \
+                    0.02 * fairness
 
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), 1)
@@ -425,13 +431,14 @@ def main():
             writer.add_scalar("train/kld(Y_alpha,Y_org)", klloss, epoch)
             writer.add_scalar("train/alpha_sparsity", size_loss, epoch)
             writer.add_scalar("train/total_loss", train_loss, epoch)
-            experiment.log({
-                'total loss': train_loss.item(),
-                'loss elbo': nll_loss.item(),
-                'causal loss': causal_loss.item(),
-                'kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
-                'sparsity': size_loss,
-            })
+            # experiment.log({
+            #     'total loss': train_loss.item(),
+            #     'fairness': fairness.item(),
+            #     'loss elbo': nll_loss.item(),
+            #     'causal loss': causal_loss.item(),
+            #     'kld_alpha_org kl(f(Gc), f(G))': klloss.item(),
+            #     'sparsity': size_loss,
+            # })
 
 
             val_loss = eval_model(val_idxs,'val')

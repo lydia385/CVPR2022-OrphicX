@@ -288,9 +288,8 @@ class VBGAE(nn.Module):
                     adj_lay = normalize_torch(torch.mul(mask_mat, adj) + torch.eye(adj.shape[0]).cpu())
                 elif mul_type=='norm_first':
                     # normalize adj matr multiply adj by mask
-         
-                    
                     adj_lay = torch.mul(mask_mat, adj_normt).to(self.device)
+
                 x = torch.squeeze(x)
                 adj_lay = torch.squeeze(adj_lay)
                 x = F.relu(self.gcs[str(i)](x, adj_lay))

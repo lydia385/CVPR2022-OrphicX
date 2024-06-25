@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 
 from brainGNN.dataset.brain_dataset import dense_to_ind_val
+from gae.renyi import calculate_conditional_MI
 
 
 """
@@ -22,12 +23,12 @@ Outputs:
     - info['xhat']
     - info['yhat']
 """
-def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None, brain=False):
+def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None, brain=False, labels=None):
     eps = 1e-8
     I = 0.0
     q = torch.zeros(params['M'], device=device)
             # Ensure feat and adj are not repeated since batch size is 1
-
+    org_adj = adj
     feat_new = feat.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     adj = adj.repeat(params['Nalpha'] * params['Nbeta'], 1, 1)
     if torch.is_tensor(mu):
@@ -65,12 +66,24 @@ def joint_uncond(params, decoder, classifier, adj, feat, node_idx=None, act=torc
             logits = classifier(feat_new, xhat)[0]
         else:
             logits = classifier(feat_new, xhat)[0][:,node_idx,:]
+    # print("feat, adj", feat.shape, org_adj.shape)
+    # org_label = classifier(feat, org_adj)
+    # print(org_label)
+    # # fairness = calculate_conditional_MI(alpha, org_label, beta) 
+    fairness = 0
+    if labels != None:
+        print(len(labels), "len")
+        fairness = calculate_conditional_MI(alpha[0], labels, beta[0])    
+        print("fairness")
+
+
     yhat = F.softmax(logits, dim=1).view(params['Nalpha'], params['Nbeta'] ,params['M'])
     p = yhat.mean(1)
     I = torch.sum(torch.mul(p, torch.log(p+eps)), dim=1).mean()
     q = p.mean(0)
     I = I - torch.sum(torch.mul(q, torch.log(q+eps)))
-    return -I, None
+    print(fairness)
+    return -I,fairness
 
 
 def beta_info_flow(params, decoder, classifier, adj, feat, node_idx=None, act=torch.sigmoid, mu=0, std=1, device=None, brain=False):
